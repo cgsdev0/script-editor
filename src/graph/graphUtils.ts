@@ -51,7 +51,7 @@ export function getConnectedComponent(story: Story, start: string): string[] {
 /** Returns the scene IDs that should be rendered (currently: warden subgraph). */
 export function getVisibleSceneIds(doc: Y.Doc): string[] {
   const story = readStory(doc);
-  const subgraphRoot = "the_warden_3";
+  const subgraphRoot = "bartender_0";
   return story.scenes[subgraphRoot]
     ? getConnectedComponent(story, subgraphRoot)
     : Object.keys(story.scenes);

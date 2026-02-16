@@ -12,7 +12,7 @@ import {
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import GraphEditor from "./graph/GraphEditor.tsx";
-import ScreenplayView from "./screenplay/ScreenplayView.tsx";
+import BranchView from "./branchview/BranchView.tsx";
 import SplitView from "./layout/SplitView.tsx";
 
 // ── Initialize CRDT document ───────────────────────────────────────────
@@ -61,7 +61,7 @@ waitForSync(persistence).then(() => {
 
   const container = document.getElementById("app")!;
   const root = createRoot(container);
-  root.render(createElement(SplitView, { left: ScreenplayView, right: GraphEditor, doc }));
+  root.render(createElement(SplitView, { left: BranchView, right: GraphEditor, doc }));
 
   // Keyboard undo/redo
   document.addEventListener("keydown", (e) => {

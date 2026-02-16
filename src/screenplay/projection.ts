@@ -7,10 +7,17 @@ import { type Node as PMNode } from "prosemirror-model";
 import { screenplaySchema } from "./schema.ts";
 import { computeSceneOrder } from "./sceneOrdering.ts";
 import { readStory } from "../crdt/index.ts";
+import { getConnectedComponent } from "../graph/graphUtils.ts";
 
 export function projectStoryToDoc(doc: Y.Doc): PMNode {
   const story = readStory(doc);
-  const sceneOrder = computeSceneOrder(story);
+  const subgraphRoot = "bartender_0";
+  const visibleSet = story.scenes[subgraphRoot]
+    ? new Set(getConnectedComponent(story, subgraphRoot))
+    : null;
+  const sceneOrder = computeSceneOrder(story).filter(
+    (id) => !visibleSet || visibleSet.has(id),
+  );
 
   const sceneNodes: PMNode[] = [];
 

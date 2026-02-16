@@ -16,6 +16,7 @@ export const screenplaySchema = new Schema({
     scene: {
       attrs: { sceneId: { default: "" } },
       content: "scene_heading (block | choice)* scene_divider?",
+      isolating: true,
       toDOM(node) {
         return ["div", { class: "sp-scene", "data-scene-id": node.attrs.sceneId }, 0];
       },
@@ -23,6 +24,7 @@ export const screenplaySchema = new Schema({
 
     scene_heading: {
       attrs: { sceneId: { default: "" } },
+      atom: true,
       toDOM(node) {
         return ["h2", { class: "sp-scene-heading" }, `SCENE: ${node.attrs.sceneId}`];
       },
@@ -59,6 +61,7 @@ export const screenplaySchema = new Schema({
 
     scene_divider: {
       group: "block",
+      atom: true,
       toDOM() {
         return ["hr", { class: "sp-divider" }];
       },
