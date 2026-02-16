@@ -1,10 +1,9 @@
 /* ── Graph Editor Styles (React Flow) ─────────────────────────────────── */
 
-/* Container fills viewport */
-#graph-container {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
+/* Container fills its split pane */
+.split-pane--right .react-flow {
+  width: 100%;
+  height: 100%;
 }
 
 /* ── Scene node ──────────────────────────────────────────────────────── */

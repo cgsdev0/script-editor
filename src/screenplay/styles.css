@@ -1,0 +1,113 @@
+/* ── Screenplay View ───────────────────────────────────────────────── */
+
+.screenplay-container {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #1e1e2e;
+  padding: 24px 32px;
+}
+
+.screenplay-container .ProseMirror {
+  font-family: "Courier New", "Courier", monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #cdd6f4;
+  max-width: 680px;
+  margin: 0 auto;
+  outline: none;
+}
+
+/* ── Scene ──────────────────────────────────────────────────────────── */
+
+.sp-scene {
+  margin-bottom: 8px;
+}
+
+/* ── Scene heading ──────────────────────────────────────────────────── */
+
+.sp-scene-heading {
+  font-family: "Courier New", "Courier", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #cba6f7;
+  border-bottom: 1px solid #45475a;
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+  user-select: none;
+}
+
+/* ── Block types ────────────────────────────────────────────────────── */
+
+.sp-block {
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid transparent;
+  margin-bottom: 4px;
+}
+
+.sp-block--dialogue {
+  border-left-color: #89b4fa;
+}
+
+.sp-block--action {
+  border-left-color: #f9e2af;
+}
+
+.sp-block--narration {
+  border-left-color: #cba6f7;
+}
+
+.sp-block--command {
+  border-left-color: #a6e3a1;
+}
+
+/* Speaker name pseudo-element */
+.sp-block[data-speaker]::before {
+  content: attr(data-speaker);
+  display: block;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin-bottom: 2px;
+  color: #f9e2af;
+}
+
+/* Hide the pseudo-element when speaker is empty */
+.sp-block[data-speaker=""]::before {
+  display: none;
+}
+
+.sp-block p {
+  margin: 0;
+}
+
+/* ── Choice ─────────────────────────────────────────────────────────── */
+
+.sp-choice {
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid #f38ba8;
+  margin-bottom: 4px;
+  color: #f38ba8;
+}
+
+.sp-choice::before {
+  content: "\2192  ";
+  font-weight: 700;
+}
+
+.sp-choice p {
+  margin: 0;
+  display: inline;
+}
+
+/* ── Scene divider ──────────────────────────────────────────────────── */
+
+.sp-divider {
+  border: none;
+  border-top: 1px solid #45475a;
+  margin: 16px 0;
+}

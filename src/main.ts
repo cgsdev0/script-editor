@@ -12,6 +12,8 @@ import {
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import GraphEditor from "./graph/GraphEditor.tsx";
+import ScreenplayView from "./screenplay/ScreenplayView.tsx";
+import SplitView from "./layout/SplitView.tsx";
 
 // ── Initialize CRDT document ───────────────────────────────────────────
 
@@ -55,11 +57,11 @@ waitForSync(persistence).then(() => {
   // Set up undo manager
   const undoManager = createUndoManager(doc);
 
-  // ── Mount React Flow graph editor ────────────────────────────────────
+  // ── Mount split view (screenplay + graph) ─────────────────────────────
 
-  const container = document.getElementById("graph-container")!;
+  const container = document.getElementById("app")!;
   const root = createRoot(container);
-  root.render(createElement(GraphEditor, { doc }));
+  root.render(createElement(SplitView, { left: ScreenplayView, right: GraphEditor, doc }));
 
   // Keyboard undo/redo
   document.addEventListener("keydown", (e) => {

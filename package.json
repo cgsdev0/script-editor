@@ -23,6 +23,11 @@
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
     "@xyflow/react": "^12.10.0",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.4",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "y-indexeddb": "^9.0.12",
