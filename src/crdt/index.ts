@@ -13,6 +13,8 @@ export {
   initializeDoc,
   getStoryMap,
   getScenesMap,
+  getLayoutMap,
+  getPositionsMap,
   readStory,
   readYScene,
   readYBlock,
@@ -43,6 +45,10 @@ export {
   setChoiceCondition,
   setChoiceEffects,
   getChoiceText,
+  setNodePosition,
+  getNodePosition,
+  setViewport,
+  getViewport,
 } from "./mutations.ts";
 
 // Persistence

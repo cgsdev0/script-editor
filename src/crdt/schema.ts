@@ -165,6 +165,17 @@ export function getStoryMap(doc: Y.Doc): Y.Map<unknown> {
   return doc.getMap("story");
 }
 
+/** Get the layout map from a Y.Doc (node positions, viewport state) */
+export function getLayoutMap(doc: Y.Doc): Y.Map<unknown> {
+  return doc.getMap("layout");
+}
+
+/** Get the positions sub-map from the layout map */
+export function getPositionsMap(doc: Y.Doc): Y.Map<Y.Map<number>> {
+  const layout = getLayoutMap(doc);
+  return layout.get("positions") as Y.Map<Y.Map<number>>;
+}
+
 /** Get the scenes map from the story */
 export function getScenesMap(doc: Y.Doc): Y.Map<Y.Map<unknown>> {
   const story = getStoryMap(doc);
@@ -185,6 +196,17 @@ export function initializeDoc(doc: Y.Doc): void {
     story.set("scenes", new Y.Map<Y.Map<unknown>>());
     story.set("entryScene", "");
   });
+
+  // Initialize layout map if not present
+  const layout = getLayoutMap(doc);
+  if (!layout.get("positions")) {
+    doc.transact(() => {
+      layout.set("positions", new Y.Map<Y.Map<number>>());
+      layout.set("zoom", 1);
+      layout.set("panX", 0);
+      layout.set("panY", 0);
+    });
+  }
 }
 
 /** Read the full story as a plain object snapshot */

@@ -4,25 +4,38 @@ import { lines } from "./schema.ts";
 import {
   importLegacyLines,
   readStory,
-  createScene,
-  addBlock,
-  addChoice,
+  initializeDoc,
   createUndoManager,
-  undo,
-  redo,
   attachPersistence,
   waitForSync,
 } from "./crdt/index.ts";
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import GraphEditor from "./graph/GraphEditor.tsx";
 
 // ── Initialize CRDT document ───────────────────────────────────────────
 
 const doc = new Y.Doc();
+
+// Initialize document structure (no-op if already loaded from persistence)
+initializeDoc(doc);
 
 // Attach local persistence (IndexedDB)
 const persistence = attachPersistence(doc, "script-editor-dev");
 
 waitForSync(persistence).then(() => {
   console.log("[persistence] Local data loaded");
+
+  // Ensure layout map is initialized (for docs created before layout was added)
+  const layout = doc.getMap("layout");
+  if (!layout.get("positions")) {
+    doc.transact(() => {
+      layout.set("positions", new Y.Map());
+      layout.set("zoom", 1);
+      layout.set("panX", 0);
+      layout.set("panY", 0);
+    });
+  }
 
   const story = readStory(doc);
 
@@ -33,71 +46,34 @@ waitForSync(persistence).then(() => {
     console.log("[importer] Entry points:", entryPoints);
   }
 
-  // Read and log the full story snapshot
+  // Log loaded state
   const fullStory = readStory(doc);
-  console.log("[crdt] Story loaded:", fullStory);
   console.log(
     `[crdt] ${Object.keys(fullStory.scenes).length} scenes, entry: ${fullStory.entryScene}`
   );
 
   // Set up undo manager
   const undoManager = createUndoManager(doc);
-  console.log("[undo] Undo manager ready");
 
-  // ── Demo: verify mutation API works ────────────────────────────────
+  // ── Mount React Flow graph editor ────────────────────────────────────
 
-  // Create a test scene, mutate it, then undo
-  const testId = createScene(doc, { id: "__test_scene__" });
-  addBlock(doc, testId, {
-    type: "dialogue",
-    speaker: "NARRATOR",
-    text: "This is a test block.",
+  const container = document.getElementById("graph-container")!;
+  const root = createRoot(container);
+  root.render(createElement(GraphEditor, { doc }));
+
+  // Keyboard undo/redo
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        undoManager.redo();
+      } else {
+        undoManager.undo();
+      }
+    }
   });
-  addChoice(doc, testId, {
-    text: "Continue...",
-    target: fullStory.entryScene,
-  });
 
-  const afterMutation = readStory(doc);
-  console.log("[test] Scene created:", afterMutation.scenes[testId]);
-
-  // Undo the mutations
-  undo(undoManager);
-  undo(undoManager);
-  undo(undoManager);
-
-  const afterUndo = readStory(doc);
-  console.log(
-    "[test] After undo, test scene exists:",
-    "__test_scene__" in afterUndo.scenes
-  );
-
-  // Redo
-  redo(undoManager);
-  redo(undoManager);
-  redo(undoManager);
-
-  const afterRedo = readStory(doc);
-  console.log(
-    "[test] After redo, test scene exists:",
-    "__test_scene__" in afterRedo.scenes
-  );
-
-  // Clean up test scene
-  undo(undoManager);
-  undo(undoManager);
-  undo(undoManager);
-
-  // Expose doc on window for debugging
+  // Expose for debugging
   (window as any).__ydoc = doc;
   (window as any).__undoManager = undoManager;
 });
-
-// ── Basic UI (placeholder) ─────────────────────────────────────────────
-
-document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
-  <div>
-    <h1>Script Editor</h1>
-    <p>CRDT core initialized. Open the console to see the loaded story data.</p>
-  </div>
-`;

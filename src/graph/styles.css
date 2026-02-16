@@ -1,0 +1,196 @@
+/* ── Graph Editor Styles (React Flow) ─────────────────────────────────── */
+
+/* Container fills viewport */
+#graph-container {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Scene node ──────────────────────────────────────────────────────── */
+
+.scene-node {
+  display: flex;
+  flex-direction: column;
+  background: #2d2d44;
+  border: 1px solid #444;
+  border-radius: 8px;
+  color: #e0e0e0;
+  min-width: 200px;
+  max-width: 280px;
+  font-size: 12px;
+}
+
+/* React Flow wraps custom nodes — style the selected state via RF class */
+.react-flow__node-sceneNode.selected .scene-node {
+  border-color: #646cff;
+  box-shadow: 0 0 12px rgba(100, 108, 255, 0.4);
+}
+
+/* Entry scene distinction */
+.react-flow__node-sceneNode[data-entry="true"] .scene-node {
+  border-color: #98c379;
+  border-width: 2px;
+}
+
+.react-flow__node-sceneNode[data-entry="true"] .scene-header {
+  background: #3a5a3a;
+}
+
+/* ── Scene node internal layout ──────────────────────────────────────── */
+
+.scene-header {
+  background: #3a3a5c;
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 7px 7px 0 0;
+  border-bottom: 1px solid #444;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-header--entry::before {
+  content: "\25B6 ";
+  color: #98c379;
+}
+
+.scene-blocks {
+  padding: 6px 10px;
+  border-bottom: 1px solid #3a3a5c;
+}
+
+.block-preview {
+  padding: 2px 0;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #bbb;
+}
+
+.block-speaker {
+  color: #e5c07b;
+  font-weight: 500;
+}
+
+.block-preview--more {
+  color: #666;
+  font-style: italic;
+}
+
+.scene-choices {
+  display: flex;
+  flex-direction: row;
+  padding: 4px 4px 14px;
+  gap: 2px;
+  border-top: 1px solid #3a3a5c;
+}
+
+.choice-col {
+  position: relative;
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+  padding: 2px 4px;
+}
+
+.choice-label {
+  display: block;
+  color: #61afef;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.choice-label::before {
+  content: "\25C6 ";
+  font-size: 8px;
+}
+
+.scene-auto-transition {
+  position: relative;
+  padding: 4px 10px 6px;
+  color: #98c379;
+  font-size: 11px;
+  border-top: 1px solid #3a3a5c;
+}
+
+/* ── React Flow handle overrides ─────────────────────────────────────── */
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: #555;
+  border: 2px solid #777;
+  border-radius: 50%;
+}
+
+.react-flow__handle:hover {
+  background: #646cff;
+  border-color: #646cff;
+}
+
+/* Position choice handles at the bottom center of their column */
+.choice-handle {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  top: auto;
+  transform: translateX(-50%);
+}
+
+.auto-handle {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  top: auto;
+  transform: translateX(-50%);
+}
+
+/* ── Edge styling ────────────────────────────────────────────────────── */
+
+.react-flow__edge-path {
+  stroke: #555;
+  stroke-width: 2;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: #888;
+  stroke-width: 3;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #646cff;
+  stroke-width: 3;
+}
+
+/* ── Presence highlights ─────────────────────────────────────────────── */
+
+.react-flow__node.presence-highlight {
+  outline-offset: 3px;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────── */
+
+.graph-toolbar {
+  display: flex;
+  gap: 6px;
+}
+
+.graph-toolbar button {
+  background: #2d2d44;
+  color: #e0e0e0;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-toolbar button:hover {
+  background: #3a3a5c;
+  border-color: #646cff;
+}

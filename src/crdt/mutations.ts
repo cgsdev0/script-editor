@@ -12,6 +12,8 @@ import {
   generateId,
   getScenesMap,
   getStoryMap,
+  getLayoutMap,
+  getPositionsMap,
   createYScene,
   createYBlock,
   createYChoice,
@@ -390,6 +392,68 @@ export function getChoiceText(
   const yChoice = findChoice(doc, sceneId, choiceId);
   if (!yChoice) return null;
   return yChoice.get("text") as Y.Text;
+}
+
+// ── Layout mutations ──────────────────────────────────────────────────
+
+/** Set the position of a scene node in the graph layout. */
+export function setNodePosition(
+  doc: Y.Doc,
+  sceneId: string,
+  x: number,
+  y: number
+): void {
+  const positions = getPositionsMap(doc);
+  doc.transact(() => {
+    let pos = positions.get(sceneId);
+    if (!pos) {
+      pos = new Y.Map<number>();
+      positions.set(sceneId, pos);
+    }
+    pos.set("x", x);
+    pos.set("y", y);
+  });
+}
+
+/** Get the position of a scene node, or null if not set. */
+export function getNodePosition(
+  doc: Y.Doc,
+  sceneId: string
+): { x: number; y: number } | null {
+  const positions = getPositionsMap(doc);
+  const pos = positions.get(sceneId);
+  if (!pos) return null;
+  const x = pos.get("x");
+  const y = pos.get("y");
+  if (x === undefined || y === undefined) return null;
+  return { x: x as number, y: y as number };
+}
+
+/** Set the viewport state (zoom, pan). */
+export function setViewport(
+  doc: Y.Doc,
+  zoom: number,
+  panX: number,
+  panY: number
+): void {
+  const layout = getLayoutMap(doc);
+  doc.transact(() => {
+    layout.set("zoom", zoom);
+    layout.set("panX", panX);
+    layout.set("panY", panY);
+  });
+}
+
+/** Get the viewport state. */
+export function getViewport(
+  doc: Y.Doc
+): { zoom: number; panX: number; panY: number } {
+  const layout = getLayoutMap(doc);
+  return {
+    zoom: (layout.get("zoom") as number) ?? 1,
+    panX: (layout.get("panX") as number) ?? 0,
+    panY: (layout.get("panY") as number) ?? 0,
+  };
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────
