@@ -117,37 +117,48 @@ function linesToDoc(data: typeof lines): PMNode {
     let content: PMNode;
 
     if ("input" in node) {
-      const choices = (node as any).input.map((choice: any) =>
-        s.nodes.choice.create(
+      const { input: rawInput, ...decisionExtra } = node as any;
+      const choices = rawInput.map((choice: any) => {
+        const { text: ct, next: cn, effect: ce, cond: cc, ...choiceExtra } = choice;
+        return s.nodes.choice.create(
           {
-            next: choice.next ?? null,
-            effect: choice.effect ?? null,
-            cond: choice.cond ?? null,
+            next: cn ?? null,
+            effect: ce ?? null,
+            cond: cc ?? null,
+            extra: Object.keys(choiceExtra).length > 0 ? choiceExtra : null,
           },
-          choice.text ? s.text(choice.text) : undefined,
-        ),
+          ct ? s.text(ct) : undefined,
+        );
+      });
+      content = s.nodes.decision.create(
+        { extra: Object.keys(decisionExtra).length > 0 ? decisionExtra : null },
+        choices,
       );
-      content = s.nodes.decision.create(null, choices);
     } else {
-      const d = node as any;
-      const textArray = Array.isArray(d.text) ? d.text : [d.text];
+      const { char, text: rawText, delay, next, trigger, unskippable, randomize, ...dialogueExtra } = node as any;
+      const textArray = Array.isArray(rawText) ? rawText : [rawText];
       const lineNodes = textArray.map((l: any) => {
         if (typeof l === "string") {
           return s.nodes.line.create(null, l ? s.text(l) : undefined);
         }
+        const { text: lt, trigger: ltrig, ...lineExtra } = l;
         return s.nodes.line.create(
-          { trigger: l.trigger ?? null },
-          l.text ? s.text(l.text) : undefined,
+          {
+            trigger: ltrig ?? null,
+            extra: Object.keys(lineExtra).length > 0 ? lineExtra : null,
+          },
+          lt ? s.text(lt) : undefined,
         );
       });
       content = s.nodes.dialogue.create(
         {
-          char: d.char,
-          delay: d.delay ?? null,
-          next: d.next ?? null,
-          trigger: d.trigger ?? null,
-          unskippable: d.unskippable ?? false,
-          randomize: d.randomize ?? false,
+          char,
+          delay: delay ?? null,
+          next: next ?? null,
+          trigger: trigger ?? null,
+          unskippable: unskippable ?? false,
+          randomize: randomize ?? false,
+          extra: Object.keys(dialogueExtra).length > 0 ? dialogueExtra : null,
         },
         lineNodes,
       );
