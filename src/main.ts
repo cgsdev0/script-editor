@@ -1029,8 +1029,31 @@ function updateVisibility(root: HTMLElement) {
   });
 }
 
+function labelEntrypoints(root: HTMLElement) {
+  // remove old labels
+  root.querySelectorAll(".entrypoint-label").forEach((el) => el.remove());
+
+  // find entries not targeted by any next
+  const allNextTargets = new Set<string>();
+  root.querySelectorAll<HTMLElement>("[data-next]").forEach((el) => {
+    allNextTargets.add(el.dataset.next!);
+  });
+
+  root.querySelectorAll<HTMLElement>(".entry[data-entry-id]").forEach((entry) => {
+    const id = entry.dataset.entryId!;
+    if (allNextTargets.has(id)) return;
+    const charName = entry.querySelector(".char-name");
+    if (!charName) return;
+    const label = document.createElement("span");
+    label.className = "entrypoint-label";
+    label.textContent = id;
+    charName.insertBefore(label, charName.firstChild);
+  });
+}
+
 function refresh(view: EditorView) {
   updateVisibility(view.dom);
+  labelEntrypoints(view.dom);
   drawArrows(view);
 }
 
@@ -1049,7 +1072,17 @@ setupDragDrop(view);
 
 // checkbox changes
 view.dom.addEventListener("change", (e) => {
-  if ((e.target as HTMLElement).classList.contains("choice-checkbox")) {
-    requestAnimationFrame(() => refresh(view));
+  const cb = e.target as HTMLInputElement;
+  if (!cb.classList.contains("choice-checkbox")) return;
+
+  const decision = cb.closest(".decision");
+  if (decision) {
+    const all = decision.querySelectorAll<HTMLInputElement>(".choice-checkbox");
+    const allChecked = [...all].every((c) => c.checked);
+    if (allChecked) {
+      all.forEach((c) => (c.checked = false));
+    }
   }
+
+  requestAnimationFrame(() => refresh(view));
 });

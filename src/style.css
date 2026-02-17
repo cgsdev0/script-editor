@@ -72,6 +72,18 @@ h1 {
   background-color: rgba(255, 255, 255, 0.02);
   border-radius: 4px;
   cursor: grab;
+  position: relative;
+}
+
+.entrypoint-label {
+  position: absolute;
+  left: 0.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.7em;
+  color: #666;
+  font-weight: 400;
+  text-transform: none;
 }
 
 .entry.dragging {
