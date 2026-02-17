@@ -39,10 +39,15 @@ h1 {
   padding: 2rem;
 }
 
-/* Subgraph filter dropdown */
-.subgraph-filter {
-  display: block;
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+.subgraph-filter {
   padding: 0.4em 0.8em;
   font-family: inherit;
   font-size: 0.85em;
@@ -62,12 +67,19 @@ h1 {
   border-color: #646cff;
 }
 
+.export-btn {
+  margin-left: auto;
+  padding: 0.4em 0.8em;
+  font-size: 0.85em;
+}
+
 /* ProseMirror overrides */
 .ProseMirror {
   outline: none;
   position: relative;
   padding-left: 240px;
   padding-right: 240px;
+  padding-bottom: 60vh;
 }
 
 .ProseMirror:focus {

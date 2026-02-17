@@ -1711,6 +1711,54 @@ function scheduleRefresh(v: EditorView) {
   });
 }
 
+// Export document to JSON
+function docToJson(doc: PMNode): Record<string, any> {
+  const result: Record<string, any> = {};
+  doc.forEach((entry) => {
+    const id = entry.attrs.id;
+    const inner = entry.firstChild!;
+
+    if (inner.type.name === "dialogue") {
+      const a = inner.attrs;
+      const node: Record<string, any> = { char: a.char };
+      const textArr: any[] = [];
+      inner.forEach((line) => {
+        const obj: Record<string, any> = { text: line.textContent };
+        if (line.attrs.trigger) obj.trigger = line.attrs.trigger;
+        if (line.attrs.extra) Object.assign(obj, line.attrs.extra);
+        // simplify single-key {text} objects to plain strings
+        if (Object.keys(obj).length === 1) {
+          textArr.push(obj.text);
+        } else {
+          textArr.push(obj);
+        }
+      });
+      node.text = textArr.length === 1 ? textArr[0] : textArr;
+      if (a.delay !== null) node.delay = a.delay;
+      if (a.next !== null) node.next = a.next;
+      if (a.trigger !== null) node.trigger = a.trigger;
+      if (a.unskippable) node.unskippable = a.unskippable;
+      if (a.randomize) node.randomize = a.randomize;
+      if (a.extra) Object.assign(node, a.extra);
+      result[id] = node;
+    } else if (inner.type.name === "decision") {
+      const inputArr: any[] = [];
+      inner.forEach((choice) => {
+        const obj: Record<string, any> = { text: choice.textContent };
+        if (choice.attrs.next) obj.next = choice.attrs.next;
+        if (choice.attrs.effect) obj.effect = choice.attrs.effect;
+        if (choice.attrs.cond) obj.cond = choice.attrs.cond;
+        if (choice.attrs.extra) Object.assign(obj, choice.attrs.extra);
+        inputArr.push(obj);
+      });
+      const node: Record<string, any> = { input: inputArr };
+      if (inner.attrs.extra) Object.assign(node, inner.attrs.extra);
+      result[id] = node;
+    }
+  });
+  return result;
+}
+
 // Subgraph filter
 let filterEntrypoint: string | null = null;
 const pinnedEntries = new Set<string>();
@@ -1730,7 +1778,27 @@ filterSelect.addEventListener("change", () => {
   }
   if (view) requestAnimationFrame(() => refresh(view));
 });
-document.querySelector("#app")!.appendChild(filterSelect);
+const toolbar = document.createElement("div");
+toolbar.className = "toolbar";
+toolbar.appendChild(filterSelect);
+
+const exportBtn = document.createElement("button");
+exportBtn.className = "export-btn";
+exportBtn.textContent = "Export JSON";
+exportBtn.addEventListener("click", () => {
+  if (!view) return;
+  const json = docToJson(view.state.doc);
+  const blob = new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "script.json";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+toolbar.appendChild(exportBtn);
+
+document.querySelector("#app")!.appendChild(toolbar);
 
 // DOM setup (synchronous — doesn't depend on Y.Doc)
 const wrapper = document.createElement("div");
