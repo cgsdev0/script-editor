@@ -1,7 +1,7 @@
 import "./style.css";
 import "prosemirror-view/style/prosemirror.css";
 import { Schema, Node as PMNode, type DOMOutputSpec } from "prosemirror-model";
-import { EditorState } from "prosemirror-state";
+import { EditorState, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { baseKeymap } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
@@ -146,6 +146,7 @@ function linesToDoc(data: typeof lines): PMNode {
 
 // overlay container for SVGs — sits outside ProseMirror's managed DOM
 let overlay: HTMLElement;
+let customDragActive = false;
 
 // maps SVG group elements to the source DOM element that owns the `next` attr
 let arrowSourceMap = new Map<Element, HTMLElement>();
@@ -703,12 +704,15 @@ function setupArrowInteraction(view: EditorView) {
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const entry = el?.closest(".entry") as HTMLElement | null;
 
+    const obs = (view as any).domObserver;
+    obs?.stop?.();
     if (hoveredEntry && hoveredEntry !== entry) {
       hoveredEntry.classList.remove("connect-target");
     }
     if (entry && entry !== hoveredEntry) {
       entry.classList.add("connect-target");
     }
+    obs?.start?.();
     hoveredEntry = entry;
   }
 
@@ -716,8 +720,11 @@ function setupArrowInteraction(view: EditorView) {
     document.removeEventListener("mousemove", onDragMove);
     document.removeEventListener("mouseup", onDragEnd);
 
+    const obs = (view as any).domObserver;
     if (hoveredEntry) {
+      obs?.stop?.();
       hoveredEntry.classList.remove("connect-target");
+      obs?.start?.();
       const targetId = hoveredEntry.dataset.entryId;
 
       if (targetId && dragSourceEl) {
@@ -769,8 +776,12 @@ function setupDragDrop(view: EditorView) {
     }
 
     if (!dragSource) return;
+    customDragActive = true;
     e.dataTransfer!.effectAllowed = "move";
+    const obs = (view as any).domObserver;
+    obs?.stop?.();
     dragSource.classList.add("dragging");
+    obs?.start?.();
   });
 
   // the element whose border-top is showing the drop indicator
@@ -822,7 +833,11 @@ function setupDragDrop(view: EditorView) {
 
     e.preventDefault();
     e.dataTransfer!.dropEffect = "move";
-    clearIndicators();
+
+    obs?.stop?.();
+    dom.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((ind) =>
+      ind.classList.remove("drag-over-top", "drag-over-bottom"),
+    );
 
     const rect = el.getBoundingClientRect();
     const inBottomHalf = e.clientY > rect.top + rect.height / 2;
@@ -870,6 +885,7 @@ function setupDragDrop(view: EditorView) {
       insertAfterIndicator = false;
       el.classList.add("drag-over-top");
     }
+    obs?.start?.();
   });
 
   dom.addEventListener("drop", (e) => {
@@ -937,18 +953,26 @@ function setupDragDrop(view: EditorView) {
 
   dom.addEventListener("dragend", cleanup);
 
+  const obs = (view as any).domObserver;
+
   function clearIndicators() {
+    obs?.stop?.();
     dom.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((el) =>
       el.classList.remove("drag-over-top", "drag-over-bottom"),
     );
+    indicatorEl = null;
+    obs?.start?.();
   }
 
   function cleanup() {
+    customDragActive = false;
+    obs?.stop?.();
     dom
       .querySelectorAll(".dragging, .drag-over-top, .drag-over-bottom")
       .forEach((el) => {
         el.classList.remove("dragging", "drag-over-top", "drag-over-bottom");
       });
+    obs?.start?.();
     dragSource = null;
     dragType = null;
   }
@@ -1067,9 +1091,26 @@ function refresh(view: EditorView) {
 }
 
 const doc = linesToDoc(lines);
-const state = EditorState.create({
+function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
+  const { $from } = state.selection;
+  // find the nearest text-containing parent (line or choice)
+  let depth = $from.depth;
+  while (depth > 0 && !$from.node(depth).isTextblock) depth--;
+  if (depth === 0) return false;
+  if (dispatch) {
+    const start = $from.start(depth);
+    const end = $from.end(depth);
+    dispatch(state.tr.setSelection(TextSelection.create(state.doc, start, end)));
+  }
+  return true;
+}
+
+const editorState = EditorState.create({
   doc,
-  plugins: [keymap(baseKeymap)],
+  plugins: [
+    keymap({ "Mod-a": selectBlock }),
+    keymap(baseKeymap),
+  ],
 });
 
 let refreshPending = false;
@@ -1095,7 +1136,7 @@ overlay.style.height = "100%";
 overlay.style.pointerEvents = "none";
 
 const view = new EditorView(wrapper, {
-  state,
+  state: editorState,
   handleDOMEvents: {
     mousedown(_view, event) {
       const target = event.target as HTMLElement;
@@ -1103,6 +1144,22 @@ const view = new EditorView(wrapper, {
         return true;
       }
       return false;
+    },
+    dragstart(_view, event) {
+      const target = event.target as HTMLElement;
+      if (target.closest(".drag-handle") || target.closest(".char-name")) {
+        return true;
+      }
+      return false;
+    },
+    dragover() {
+      return customDragActive;
+    },
+    drop() {
+      return customDragActive;
+    },
+    dragend() {
+      return customDragActive;
     },
   },
   dispatchTransaction(tr) {
