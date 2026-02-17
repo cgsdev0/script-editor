@@ -56,6 +56,12 @@ h1 {
   margin-bottom: 1.5rem;
 }
 
+.entry.connect-target {
+  outline: 2px solid #b8a038;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 
 /* Dialogue */
 .char-name {
@@ -65,6 +71,19 @@ h1 {
   text-transform: uppercase;
   background-color: rgba(255, 255, 255, 0.02);
   border-radius: 4px;
+  cursor: grab;
+}
+
+.entry.dragging {
+  opacity: 0.3;
+}
+
+.entry.drag-over-top {
+  border-top: 2px solid #aaa;
+}
+
+.entry.drag-over-bottom {
+  border-bottom: 2px solid #aaa;
 }
 
 .dialogue-lines .line {
@@ -80,11 +99,46 @@ h1 {
 .choice {
   margin: 0.15rem 0;
   color: #7ec8e3;
+  display: flex;
+  align-items: baseline;
 }
 
-.choice::before {
-  content: "> ";
-  color: #555;
+.drag-handle {
+  cursor: grab;
+  color: #444;
+  user-select: none;
+  margin-right: 0.4em;
+  font-size: 0.9em;
+}
+
+.drag-handle:hover {
+  color: #888;
+}
+
+.choice.dragging {
+  opacity: 0.3;
+}
+
+.choice.drag-over-top {
+  border-top: 2px solid #7ec8e3;
+}
+
+.choice.drag-over-bottom {
+  border-bottom: 2px solid #7ec8e3;
+}
+
+.choice-checkbox {
+  margin: 0 0.4em 0 0;
+  cursor: pointer;
+  accent-color: #7ec8e3;
+}
+
+.choice.choice-dimmed {
+  opacity: 0.3;
+}
+
+.entry.entry-hidden {
+  display: none;
 }
 
 .logo {
