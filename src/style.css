@@ -39,6 +39,29 @@ h1 {
   padding: 2rem;
 }
 
+/* Subgraph filter dropdown */
+.subgraph-filter {
+  display: block;
+  margin-bottom: 1rem;
+  padding: 0.4em 0.8em;
+  font-family: inherit;
+  font-size: 0.85em;
+  color: #ccc;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.subgraph-filter:hover {
+  border-color: #666;
+}
+
+.subgraph-filter:focus {
+  border-color: #646cff;
+}
+
 /* ProseMirror overrides */
 .ProseMirror {
   outline: none;
@@ -181,6 +204,10 @@ h1 {
 
 .entry.entry-hidden {
   display: none;
+}
+
+.entry.entry-detached {
+  opacity: 0.3;
 }
 
 .char-name-input {

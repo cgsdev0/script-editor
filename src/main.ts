@@ -1016,41 +1016,20 @@ function setupDragDrop(view: EditorView) {
   }
 }
 
-function updateVisibility(root: HTMLElement) {
-  const entries = root.querySelectorAll<HTMLElement>(".entry[data-entry-id]");
-  const hasAnyChecks =
-    root.querySelector<HTMLElement>(".choice[data-checked]") !== null;
-
-  // reset
-  entries.forEach((e) => e.classList.remove("entry-hidden"));
-  root
-    .querySelectorAll(".choice")
-    .forEach((e) => e.classList.remove("choice-dimmed"));
-
-  if (!hasAnyChecks) return;
-
-  // gray out unchecked choices in decisions that have at least one check
-  root.querySelectorAll(".decision").forEach((decision) => {
-    const checked = decision.querySelectorAll(".choice[data-checked]");
-    if (checked.length > 0) {
-      decision.querySelectorAll(".choice").forEach((choice) => {
-        if (!choice.hasAttribute("data-checked")) choice.classList.add("choice-dimmed");
-      });
-    }
-  });
-
-  // walk the graph from all root entries (entries not targeted by any next)
+function getEntrypoints(root: HTMLElement): string[] {
   const allNextTargets = new Set<string>();
   root.querySelectorAll<HTMLElement>("[data-next]").forEach((el) => {
     allNextTargets.add(el.dataset.next!);
   });
-
-  const rootIds: string[] = [];
-  entries.forEach((entry) => {
+  const ids: string[] = [];
+  root.querySelectorAll<HTMLElement>(".entry[data-entry-id]").forEach((entry) => {
     const id = entry.dataset.entryId!;
-    if (!allNextTargets.has(id)) rootIds.push(id);
+    if (!allNextTargets.has(id)) ids.push(id);
   });
+  return ids;
+}
 
+function walkGraph(root: HTMLElement, startIds: string[], respectChecks = true): Set<string> {
   const reachable = new Set<string>();
 
   function walk(entryId: string) {
@@ -1073,7 +1052,7 @@ function updateVisibility(root: HTMLElement) {
       const checked = decision.querySelectorAll<HTMLElement>(
         ".choice[data-checked]",
       );
-      if (checked.length > 0) {
+      if (respectChecks && checked.length > 0) {
         checked.forEach((choice) => {
           if (choice.dataset.next) walk(choice.dataset.next);
         });
@@ -1087,11 +1066,61 @@ function updateVisibility(root: HTMLElement) {
     }
   }
 
-  rootIds.forEach((id) => walk(id));
+  startIds.forEach((id) => walk(id));
+  return reachable;
+}
+
+function updateVisibility(root: HTMLElement) {
+  const entries = root.querySelectorAll<HTMLElement>(".entry[data-entry-id]");
+  const hasAnyChecks =
+    root.querySelector<HTMLElement>(".choice[data-checked]") !== null;
+
+  // reset
+  entries.forEach((e) => e.classList.remove("entry-hidden", "entry-detached"));
+  root
+    .querySelectorAll(".choice")
+    .forEach((e) => e.classList.remove("choice-dimmed"));
+
+  // gray out unchecked choices in decisions that have at least one check
+  if (hasAnyChecks) {
+    root.querySelectorAll(".decision").forEach((decision) => {
+      const checked = decision.querySelectorAll(".choice[data-checked]");
+      if (checked.length > 0) {
+        decision.querySelectorAll(".choice").forEach((choice) => {
+          if (!choice.hasAttribute("data-checked")) choice.classList.add("choice-dimmed");
+        });
+      }
+    });
+  }
+
+  // determine which roots to walk from
+  const rootIds = filterEntrypoint ? [filterEntrypoint] : getEntrypoints(root);
+
+  // always walk the graph when filtering, even without checks
+  if (!hasAnyChecks && !filterEntrypoint) return;
+
+  const reachable = walkGraph(root, rootIds);
+
+  // full subgraph ignoring checkboxes — used for pinning & detached display
+  const fullSubgraph = filterEntrypoint && hasAnyChecks
+    ? walkGraph(root, rootIds, false)
+    : reachable;
+
+  // auto-pin full subgraph entries so remote additions stick
+  if (filterEntrypoint) {
+    for (const id of fullSubgraph) pinnedEntries.add(id);
+  }
 
   entries.forEach((entry) => {
-    if (!reachable.has(entry.dataset.entryId!)) {
+    const id = entry.dataset.entryId!;
+    if (reachable.has(id)) return;
+
+    if (fullSubgraph.has(id) || !pinnedEntries.has(id)) {
+      // in subgraph but checkbox-filtered, or not pinned at all → hide
       entry.classList.add("entry-hidden");
+    } else {
+      // pinned but not in subgraph (newly created / disconnected) → gray out
+      entry.classList.add("entry-detached");
     }
   });
 }
@@ -1118,10 +1147,31 @@ function labelEntrypoints(root: HTMLElement) {
   });
 }
 
+function updateFilterDropdown(root: HTMLElement) {
+  const entrypoints = getEntrypoints(root);
+  const current = filterSelect.value;
+  // clear all but the "All" option
+  while (filterSelect.options.length > 1) filterSelect.remove(1);
+  for (const id of entrypoints) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = id;
+    filterSelect.appendChild(opt);
+  }
+  // restore selection if still valid, otherwise reset
+  if (current && entrypoints.includes(current)) {
+    filterSelect.value = current;
+  } else if (current) {
+    filterSelect.value = "";
+    filterEntrypoint = null;
+  }
+}
+
 function refresh(view: EditorView) {
   // suppress ProseMirror's DOM observer while we modify classes/labels
   const obs = (view as any).domObserver;
   obs?.stop?.();
+  updateFilterDropdown(view.dom);
   updateVisibility(view.dom);
   labelEntrypoints(view.dom);
   obs?.start?.();
@@ -1319,6 +1369,7 @@ function createEntryBelow(state: EditorState, dispatch?: (tr: any) => void, view
   if (dispatch && view) {
     const insertPos = $from.after(depth);
     const newId = generateEntryId();
+    pinnedEntries.add(newId);
     const newEntry = scriptSchema.nodes.entry.create(
       { id: newId },
       scriptSchema.nodes.dialogue.create(
@@ -1659,6 +1710,27 @@ function scheduleRefresh(v: EditorView) {
     refresh(v);
   });
 }
+
+// Subgraph filter
+let filterEntrypoint: string | null = null;
+const pinnedEntries = new Set<string>();
+const filterSelect = document.createElement("select");
+filterSelect.className = "subgraph-filter";
+const allOption = document.createElement("option");
+allOption.value = "";
+allOption.textContent = "All entrypoints";
+filterSelect.appendChild(allOption);
+filterSelect.addEventListener("change", () => {
+  filterEntrypoint = filterSelect.value || null;
+  pinnedEntries.clear();
+  if (filterEntrypoint && view) {
+    for (const id of walkGraph(view.dom, [filterEntrypoint], false)) {
+      pinnedEntries.add(id);
+    }
+  }
+  if (view) requestAnimationFrame(() => refresh(view));
+});
+document.querySelector("#app")!.appendChild(filterSelect);
 
 // DOM setup (synchronous — doesn't depend on Y.Doc)
 const wrapper = document.createElement("div");
