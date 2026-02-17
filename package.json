@@ -24,6 +24,7 @@
     "@codemirror/view": "^6.39.14",
     "arktype": "^2.1.29",
     "codemirror": "^6.0.2",
+    "notyf": "^3.10.0",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-keymap": "^1.2.3",
     "prosemirror-model": "^1.25.4",

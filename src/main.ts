@@ -15,6 +15,10 @@ import * as Y from "yjs";
 import { prosemirrorJSONToYDoc } from "y-prosemirror";
 import { undo, redo } from "y-prosemirror";
 import * as collab from "./collab.ts";
+import { Notyf } from "notyf";
+import "notyf/notyf.min.css";
+
+const notyf = new Notyf({ duration: 3000, position: { x: "right", y: "top" }, ripple: false });
 
 export const scriptSchema = new Schema({
   nodes: {
@@ -1622,8 +1626,9 @@ function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
     let parsed: Record<string, any>;
     try {
       parsed = JSON.parse(text);
-    } catch {
-      return; // silently skip on invalid JSON
+    } catch (e) {
+      notyf.error(`Invalid JSON: ${(e as SyntaxError).message}`);
+      return;
     }
 
     const { id, ...rest } = parsed;
@@ -1632,6 +1637,16 @@ function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
     // update entry id and all next references if changed
     const oldId = data.entryNode.attrs.id;
     if (id !== undefined && id !== oldId) {
+      // check for duplicate ID
+      let duplicate = false;
+      view.state.doc.forEach((node) => {
+        if (node.type.name === "entry" && node.attrs.id === id) duplicate = true;
+      });
+      if (duplicate) {
+        notyf.error(`ID "${id}" already exists`);
+        return;
+      }
+
       tr = tr.setNodeMarkup(data.entryPos, null, { ...data.entryNode.attrs, id });
       // update all dialogue/choice nodes whose next points to the old id
       tr.doc.descendants((node, pos) => {
