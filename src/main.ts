@@ -18,7 +18,7 @@ import * as collab from "./collab.ts";
 import { Notyf } from "notyf";
 import "notyf/notyf.min.css";
 
-const notyf = new Notyf({ duration: 3000, position: { x: "right", y: "top" }, ripple: false });
+const notyf = new Notyf({ duration: 6000, position: { x: "right", y: "bottom" }, ripple: false });
 
 export const scriptSchema = new Schema({
   nodes: {
