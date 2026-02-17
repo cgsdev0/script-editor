@@ -1019,6 +1019,41 @@ function setupDragDrop(view: EditorView) {
 
   dom.addEventListener("dragend", cleanup);
 
+  // handle dragging above the editor (over toolbar etc.)
+  document.addEventListener("dragover", (e) => {
+    if (!dragSource || dragType !== "entry") return;
+    // only act when cursor is above the editor
+    const editorTop = dom.getBoundingClientRect().top;
+    if (e.clientY >= editorTop) return;
+
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = "move";
+
+    const obs = (view as any).domObserver;
+    obs?.stop?.();
+    dom.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((ind) =>
+      ind.classList.remove("drag-over-top", "drag-over-bottom"),
+    );
+
+    // find first visible entry
+    const first = dom.querySelector<HTMLElement>(".entry:not(.entry-hidden):not(.dragging)");
+    if (first && first !== dragSource) {
+      indicatorEl = first;
+      insertAfterIndicator = false;
+      first.classList.add("drag-over-top");
+    }
+    obs?.start?.();
+  });
+
+  document.addEventListener("drop", (e) => {
+    if (!dragSource || dragType !== "entry" || !indicatorEl) return;
+    const editorTop = dom.getBoundingClientRect().top;
+    if (e.clientY >= editorTop) return;
+    // forward to the dom drop handler by dispatching a synthetic event
+    e.preventDefault();
+    dom.dispatchEvent(new DragEvent("drop", { bubbles: true }));
+  });
+
   const obs = (view as any).domObserver;
 
   function clearIndicators() {
@@ -1223,7 +1258,16 @@ function findEntryPosByID(doc: PMNode, id: string): { pos: number; node: PMNode 
 function removeEntry(view: EditorView, id: string) {
   const found = findEntryPosByID(view.state.doc, id);
   if (!found) return;
-  const tr = view.state.tr.delete(found.pos, found.pos + found.node.nodeSize);
+  let tr = view.state.tr.delete(found.pos, found.pos + found.node.nodeSize);
+  // disconnect any nodes that link to the deleted entry
+  tr.doc.descendants((node, pos) => {
+    if (
+      (node.type.name === "dialogue" || node.type.name === "choice") &&
+      node.attrs.next === id
+    ) {
+      tr = tr.setNodeMarkup(pos, null, { ...node.attrs, next: null });
+    }
+  });
   view.dispatch(tr);
 }
 
@@ -1874,7 +1918,7 @@ collab.provider.on("sync", (synced: boolean) => {
   view = new EditorView(wrapper, {
     state: editorState,
     handleDOMEvents: {
-      mousedown(_view, event) {
+      mousedown(pmView, event) {
         const target = event.target as HTMLElement;
         const charNameEl = target.closest(".char-name") as HTMLElement | null;
         if (charNameEl) {
@@ -1886,6 +1930,28 @@ collab.provider.on("sync", (synced: boolean) => {
         }
         if (target.closest(".drag-handle")) {
           return true;
+        }
+        // clicks outside editable text (badges, padding, etc.) → place cursor
+        // at end of whichever choice/line the click Y overlaps
+        if (!target.closest(".choice-text") && !target.closest(".dialogue-lines .line") && !target.closest(".choice-checkbox")) {
+          const y = event.clientY;
+          const candidates = pmView.dom.querySelectorAll<HTMLElement>(".choice, .dialogue-lines .line");
+          for (const el of candidates) {
+            const rect = el.getBoundingClientRect();
+            if (y >= rect.top && y <= rect.bottom) {
+              const textEl = el.classList.contains("choice")
+                ? el.querySelector(".choice-text")
+                : el;
+              if (textEl) {
+                event.preventDefault();
+                const pos = pmView.posAtDOM(textEl, textEl.childNodes.length);
+                const tr = pmView.state.tr.setSelection(TextSelection.create(pmView.state.doc, pos));
+                pmView.dispatch(tr);
+                pmView.focus();
+                return true;
+              }
+            }
+          }
         }
         return false;
       },
@@ -1922,8 +1988,40 @@ collab.provider.on("sync", (synced: boolean) => {
       },
     },
     dispatchTransaction(this: EditorView, tr) {
-      const newState = this.state.apply(tr);
+      const oldState = this.state;
+      const newState = oldState.apply(tr);
       this.updateState(newState);
+
+      // clean up dangling next references when entries are deleted
+      if (tr.docChanged) {
+        const oldIds = new Set<string>();
+        oldState.doc.forEach((node) => {
+          if (node.type.name === "entry") oldIds.add(node.attrs.id);
+        });
+        const newIds = new Set<string>();
+        newState.doc.forEach((node) => {
+          if (node.type.name === "entry") newIds.add(node.attrs.id);
+        });
+        const removed = new Set<string>();
+        for (const id of oldIds) {
+          if (!newIds.has(id)) removed.add(id);
+        }
+        if (removed.size > 0) {
+          let fixTr = this.state.tr;
+          let needsFix = false;
+          fixTr.doc.descendants((node, pos) => {
+            if (
+              (node.type.name === "dialogue" || node.type.name === "choice") &&
+              node.attrs.next && removed.has(node.attrs.next)
+            ) {
+              fixTr = fixTr.setNodeMarkup(pos, null, { ...node.attrs, next: null });
+              needsFix = true;
+            }
+          });
+          if (needsFix) this.dispatch(fixTr);
+        }
+      }
+
       scheduleRefresh(this);
     },
   });
