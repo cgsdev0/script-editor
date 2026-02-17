@@ -17,6 +17,8 @@
   },
   "dependencies": {
     "arktype": "^2.1.29",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-keymap": "^1.2.3",
     "prosemirror-model": "^1.25.4",
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.41.6"

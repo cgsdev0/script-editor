@@ -3,6 +3,8 @@ import "prosemirror-view/style/prosemirror.css";
 import { Schema, Node as PMNode, type DOMOutputSpec } from "prosemirror-model";
 import { EditorState } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
+import { baseKeymap } from "prosemirror-commands";
+import { keymap } from "prosemirror-keymap";
 import { lines } from "./schema.ts";
 
 export const scriptSchema = new Schema({
@@ -70,15 +72,17 @@ export const scriptSchema = new Schema({
         next: { default: null },
         effect: { default: null },
         cond: { default: null },
+        checked: { default: false },
       },
       content: "text*",
       toDOM(node): DOMOutputSpec {
         const attrs: Record<string, string> = { class: "choice" };
         if (node.attrs.next) attrs["data-next"] = node.attrs.next;
+        if (node.attrs.checked) attrs["data-checked"] = "true";
         return [
           "div",
           attrs,
-          ["input", { type: "checkbox", class: "choice-checkbox", contenteditable: "false" }],
+          ["span", { class: "choice-checkbox", contenteditable: "false" }, node.attrs.checked ? "\u2611" : "\u2610"],
           ["span", { class: "drag-handle", contenteditable: "false", draggable: "true" }, "\u2847"],
           ["span", { class: "choice-text" }, 0],
         ];
@@ -140,6 +144,9 @@ function linesToDoc(data: typeof lines): PMNode {
   return s.nodes.doc.create(null, entries);
 }
 
+// overlay container for SVGs — sits outside ProseMirror's managed DOM
+let overlay: HTMLElement;
+
 // maps SVG group elements to the source DOM element that owns the `next` attr
 let arrowSourceMap = new Map<Element, HTMLElement>();
 let exitArrowSourceMap = new Map<Element, HTMLElement>();
@@ -174,7 +181,7 @@ function selectArrow(group: SVGGElement | null) {
 
 function drawArrows(view: EditorView) {
   const root = view.dom;
-  root.querySelectorAll(".arrow-svg").forEach((el) => el.remove());
+  overlay.querySelectorAll(".arrow-svg").forEach((el) => el.remove());
   arrowSourceMap.clear();
   exitArrowSourceMap.clear();
   if (selectedArrowGroup) selectedArrowGroup = null;
@@ -415,13 +422,13 @@ function drawArrows(view: EditorView) {
   if (downArrows.length) {
     const svg = makeSvg("left");
     addPaths(svg, downArrows, assignColumns(downArrows), "left");
-    root.appendChild(svg);
+    overlay.appendChild(svg);
   }
 
   if (upArrows.length) {
     const svg = makeSvg("right");
     addPaths(svg, upArrows, assignColumns(upArrows), "right");
-    root.appendChild(svg);
+    overlay.appendChild(svg);
   }
 
   // sequential vertical arrows between adjacent entries
@@ -486,7 +493,7 @@ function drawArrows(view: EditorView) {
       arrowSourceMap.set(g, a.sourceEl);
     });
 
-    root.appendChild(seqSvg);
+    overlay.appendChild(seqSvg);
   }
 
   // exit arrows — full-width SVG so hit areas work even when arrows start in content area
@@ -575,7 +582,7 @@ function drawArrows(view: EditorView) {
       exitArrowSourceMap.set(g, el);
     });
 
-    root.appendChild(exitSvg);
+    overlay.appendChild(exitSvg);
   }
 }
 
@@ -583,7 +590,7 @@ function setupArrowInteraction(view: EditorView) {
   const root = view.dom;
 
   // --- click to select connection arrows ---
-  root.addEventListener("click", (e) => {
+  overlay.addEventListener("click", (e) => {
     const g = (e.target as Element).closest("g");
     if (g && arrowSourceMap.has(g)) {
       e.stopPropagation();
@@ -623,7 +630,7 @@ function setupArrowInteraction(view: EditorView) {
   let dragOverlay: SVGSVGElement | null = null;
   let hoveredEntry: HTMLElement | null = null;
 
-  root.addEventListener("mousedown", (e) => {
+  overlay.addEventListener("mousedown", (e) => {
     const g = (e.target as Element).closest(".exit-arrow");
     if (!g || !exitArrowSourceMap.has(g)) return;
 
@@ -677,7 +684,7 @@ function setupArrowInteraction(view: EditorView) {
     dragLine.setAttribute("stroke-width", "2");
     dragLine.setAttribute("stroke-dasharray", "6 4");
     dragOverlay.appendChild(dragLine);
-    root.appendChild(dragOverlay);
+    overlay.appendChild(dragOverlay);
 
     document.addEventListener("mousemove", onDragMove);
     document.addEventListener("mouseup", onDragEnd);
@@ -950,7 +957,7 @@ function setupDragDrop(view: EditorView) {
 function updateVisibility(root: HTMLElement) {
   const entries = root.querySelectorAll<HTMLElement>(".entry[data-entry-id]");
   const hasAnyChecks =
-    root.querySelector<HTMLInputElement>(".choice-checkbox:checked") !== null;
+    root.querySelector<HTMLElement>(".choice[data-checked]") !== null;
 
   // reset
   entries.forEach((e) => e.classList.remove("entry-hidden"));
@@ -962,11 +969,10 @@ function updateVisibility(root: HTMLElement) {
 
   // gray out unchecked choices in decisions that have at least one check
   root.querySelectorAll(".decision").forEach((decision) => {
-    const checked = decision.querySelectorAll(".choice-checkbox:checked");
+    const checked = decision.querySelectorAll(".choice[data-checked]");
     if (checked.length > 0) {
       decision.querySelectorAll(".choice").forEach((choice) => {
-        const cb = choice.querySelector<HTMLInputElement>(".choice-checkbox");
-        if (!cb?.checked) choice.classList.add("choice-dimmed");
+        if (!choice.hasAttribute("data-checked")) choice.classList.add("choice-dimmed");
       });
     }
   });
@@ -1002,13 +1008,12 @@ function updateVisibility(root: HTMLElement) {
 
     const decision = entry.querySelector(".decision");
     if (decision) {
-      const checked = decision.querySelectorAll<HTMLInputElement>(
-        ".choice-checkbox:checked",
+      const checked = decision.querySelectorAll<HTMLElement>(
+        ".choice[data-checked]",
       );
       if (checked.length > 0) {
-        checked.forEach((cb) => {
-          const choice = cb.closest<HTMLElement>(".choice");
-          if (choice?.dataset.next) walk(choice.dataset.next);
+        checked.forEach((choice) => {
+          if (choice.dataset.next) walk(choice.dataset.next);
         });
       } else {
         decision
@@ -1052,37 +1057,118 @@ function labelEntrypoints(root: HTMLElement) {
 }
 
 function refresh(view: EditorView) {
+  // suppress ProseMirror's DOM observer while we modify classes/labels
+  const obs = (view as any).domObserver;
+  obs?.stop?.();
   updateVisibility(view.dom);
   labelEntrypoints(view.dom);
+  obs?.start?.();
   drawArrows(view);
 }
 
 const doc = linesToDoc(lines);
-const state = EditorState.create({ doc });
-
-const view = new EditorView(document.querySelector("#app")!, {
-  state,
-  editable: () => false,
+const state = EditorState.create({
+  doc,
+  plugins: [keymap(baseKeymap)],
 });
+
+let refreshPending = false;
+function scheduleRefresh(v: EditorView) {
+  if (refreshPending) return;
+  refreshPending = true;
+  requestAnimationFrame(() => {
+    refreshPending = false;
+    refresh(v);
+  });
+}
+
+const wrapper = document.createElement("div");
+wrapper.style.position = "relative";
+document.querySelector("#app")!.appendChild(wrapper);
+
+overlay = document.createElement("div");
+overlay.style.position = "absolute";
+overlay.style.top = "0";
+overlay.style.left = "0";
+overlay.style.width = "100%";
+overlay.style.height = "100%";
+overlay.style.pointerEvents = "none";
+
+const view = new EditorView(wrapper, {
+  state,
+  handleDOMEvents: {
+    mousedown(_view, event) {
+      const target = event.target as HTMLElement;
+      if (target.closest(".drag-handle") || target.closest(".char-name")) {
+        return true;
+      }
+      return false;
+    },
+  },
+  dispatchTransaction(tr) {
+    const newState = view.state.apply(tr);
+    view.updateState(newState);
+    scheduleRefresh(view);
+  },
+});
+
+wrapper.appendChild(overlay);
 
 // draw arrows after initial render
 requestAnimationFrame(() => refresh(view));
 setupArrowInteraction(view);
 setupDragDrop(view);
 
-// checkbox changes
-view.dom.addEventListener("change", (e) => {
-  const cb = e.target as HTMLInputElement;
-  if (!cb.classList.contains("choice-checkbox")) return;
+// checkbox toggles via ProseMirror transactions
+view.dom.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  if (!target.classList.contains("choice-checkbox")) return;
 
-  const decision = cb.closest(".decision");
-  if (decision) {
-    const all = decision.querySelectorAll<HTMLInputElement>(".choice-checkbox");
-    const allChecked = [...all].every((c) => c.checked);
-    if (allChecked) {
-      all.forEach((c) => (c.checked = false));
+  const choiceEl = target.closest(".choice") as HTMLElement;
+  if (!choiceEl) return;
+
+  const pos = view.posAtDOM(choiceEl, 0);
+  const $pos = view.state.doc.resolve(pos);
+
+  // find choice node depth
+  let depth = $pos.depth;
+  while (depth > 0 && $pos.node(depth).type.name !== "choice") depth--;
+  if (depth === 0) return;
+
+  const choiceNode = $pos.node(depth);
+  const choicePos = $pos.before(depth);
+  const newChecked = !choiceNode.attrs.checked;
+
+  // check if toggling would make all checked → reset all
+  const decisionNode = $pos.node(depth - 1);
+  let allWouldBeChecked = true;
+  decisionNode.forEach((child) => {
+    if (child.type.name === "choice") {
+      const wouldBe = child === choiceNode ? newChecked : child.attrs.checked;
+      if (!wouldBe) allWouldBeChecked = false;
     }
+  });
+
+  let tr = view.state.tr;
+  if (allWouldBeChecked) {
+    // uncheck all choices in this decision
+    const decisionPos = $pos.before(depth - 1);
+    let offset = 1; // skip into decision content
+    decisionNode.forEach((child) => {
+      if (child.type.name === "choice" && child.attrs.checked) {
+        tr = tr.setNodeMarkup(decisionPos + offset, null, {
+          ...child.attrs,
+          checked: false,
+        });
+      }
+      offset += child.nodeSize;
+    });
+  } else {
+    tr = tr.setNodeMarkup(choicePos, null, {
+      ...choiceNode.attrs,
+      checked: newChecked,
+    });
   }
 
-  requestAnimationFrame(() => refresh(view));
+  view.dispatch(tr);
 });

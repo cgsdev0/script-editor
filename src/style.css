@@ -140,9 +140,10 @@ h1 {
 }
 
 .choice-checkbox {
-  margin: 0 0.4em 0 0;
   cursor: pointer;
-  accent-color: #7ec8e3;
+  margin-right: 0.4em;
+  color: #7ec8e3;
+  user-select: none;
 }
 
 .choice.choice-dimmed {
