@@ -148,6 +148,11 @@ function linesToDoc(data: typeof lines): PMNode {
 let overlay: HTMLElement;
 let customDragActive = false;
 
+let entryIdCounter = 0;
+function generateEntryId(): string {
+  return `new_${++entryIdCounter}_${Date.now()}`;
+}
+
 // maps SVG group elements to the source DOM element that owns the `next` attr
 let arrowSourceMap = new Map<Element, HTMLElement>();
 let exitArrowSourceMap = new Map<Element, HTMLElement>();
@@ -1090,6 +1095,185 @@ function refresh(view: EditorView) {
   drawArrows(view);
 }
 
+// --- Ctrl+Enter: create new entry below ---
+
+let activeNameInput: HTMLInputElement | null = null;
+
+function findEntryPosByID(doc: PMNode, id: string): { pos: number; node: PMNode } | null {
+  let result: { pos: number; node: PMNode } | null = null;
+  doc.forEach((child, off) => {
+    if (!result && child.type.name === "entry" && child.attrs.id === id) {
+      result = { pos: off, node: child };
+    }
+  });
+  return result;
+}
+
+function removeEntry(view: EditorView, id: string) {
+  const found = findEntryPosByID(view.state.doc, id);
+  if (!found) return;
+  const tr = view.state.tr.delete(found.pos, found.pos + found.node.nodeSize);
+  view.dispatch(tr);
+}
+
+function finalizeDialogue(view: EditorView, id: string, charName: string) {
+  const found = findEntryPosByID(view.state.doc, id);
+  if (!found) return;
+  // replace the dialogue node entirely so ProseMirror re-renders the char-name text
+  const dialoguePos = found.pos + 1;
+  const dialogueNode = found.node.firstChild!;
+  const newDialogue = scriptSchema.nodes.dialogue.create(
+    { ...dialogueNode.attrs, char: charName },
+    dialogueNode.content,
+  );
+  const tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, newDialogue);
+  view.dispatch(tr);
+  // focus the first line in the new entry
+  requestAnimationFrame(() => {
+    const entryEl = view.dom.querySelector(`.entry[data-entry-id="${id}"]`);
+    const lineEl = entryEl?.querySelector(".line");
+    if (lineEl) {
+      const pos = view.posAtDOM(lineEl, 0);
+      const tr2 = view.state.tr.setSelection(TextSelection.create(view.state.doc, pos));
+      view.dispatch(tr2);
+      view.focus();
+    }
+  });
+}
+
+function convertToDecision(view: EditorView, id: string) {
+  const found = findEntryPosByID(view.state.doc, id);
+  if (!found) return;
+  // replace the dialogue node with a decision node containing one empty choice
+  const dialoguePos = found.pos + 1;
+  const dialogueNode = found.node.firstChild!;
+  const decision = scriptSchema.nodes.decision.create(null, [
+    scriptSchema.nodes.choice.create(null),
+  ]);
+  const tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, decision);
+  view.dispatch(tr);
+  // focus the first choice-text in the new entry
+  requestAnimationFrame(() => {
+    const entryEl = view.dom.querySelector(`.entry[data-entry-id="${id}"]`);
+    const choiceText = entryEl?.querySelector(".choice-text");
+    if (choiceText) {
+      const pos = view.posAtDOM(choiceText, 0);
+      const tr2 = view.state.tr.setSelection(TextSelection.create(view.state.doc, pos));
+      view.dispatch(tr2);
+      view.focus();
+    }
+  });
+}
+
+function showNameInput(view: EditorView, id: string) {
+  // find the char-name element for this entry
+  const entryEl = view.dom.querySelector(`.entry[data-entry-id="${id}"]`);
+  if (!entryEl) return;
+  const charNameEl = entryEl.querySelector(".char-name") as HTMLElement;
+  if (!charNameEl) return;
+
+  const input = document.createElement("input");
+  input.className = "char-name-input";
+  input.placeholder = "CHARACTER";
+  input.type = "text";
+
+  // position over the char-name element
+  function positionInput() {
+    const wrapperRect = overlay.parentElement!.getBoundingClientRect();
+    const charRect = charNameEl.getBoundingClientRect();
+    input.style.position = "absolute";
+    input.style.left = charRect.left - wrapperRect.left + "px";
+    input.style.top = charRect.top - wrapperRect.top + "px";
+    input.style.width = charRect.width + "px";
+    input.style.height = charRect.height + "px";
+  }
+  positionInput();
+
+  overlay.appendChild(input);
+  activeNameInput = input;
+  input.focus();
+
+  let committed = false;
+
+  function commit() {
+    if (committed) return;
+    committed = true;
+    const value = input.value.trim().toUpperCase();
+    // defer cleanup so the input stays in the DOM through the keydown event,
+    // preventing focus from falling to ProseMirror and re-dispatching Enter
+    requestAnimationFrame(() => {
+      cleanup();
+      if (!value) {
+        removeEntry(view, id);
+        view.focus();
+        return;
+      }
+      if (value === "PLAYER") {
+        convertToDecision(view, id);
+      } else {
+        finalizeDialogue(view, id, value);
+      }
+    });
+  }
+
+  function cancel() {
+    if (committed) return;
+    committed = true;
+    cleanup();
+    removeEntry(view, id);
+    view.focus();
+  }
+
+  function cleanup() {
+    input.remove();
+    activeNameInput = null;
+  }
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancel();
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      if (!committed) cancel();
+    }, 0);
+  });
+}
+
+function createEntryBelow(state: EditorState, dispatch?: (tr: any) => void, view?: EditorView) {
+  if (activeNameInput) return false;
+
+  const { $from } = state.selection;
+  // walk up to find the entry node
+  let depth = $from.depth;
+  while (depth > 0 && $from.node(depth).type.name !== "entry") depth--;
+  if (depth === 0) return false;
+
+  if (dispatch && view) {
+    const insertPos = $from.after(depth);
+    const newId = generateEntryId();
+    const newEntry = scriptSchema.nodes.entry.create(
+      { id: newId },
+      scriptSchema.nodes.dialogue.create(
+        { char: "" },
+        scriptSchema.nodes.line.create(),
+      ),
+    );
+    const tr = state.tr.insert(insertPos, newEntry);
+    dispatch(tr);
+    requestAnimationFrame(() => showNameInput(view, newId));
+  }
+  return true;
+}
+
 const doc = linesToDoc(lines);
 function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
   const { $from } = state.selection;
@@ -1108,7 +1292,7 @@ function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
 const editorState = EditorState.create({
   doc,
   plugins: [
-    keymap({ "Mod-a": selectBlock }),
+    keymap({ "Mod-a": selectBlock, "Mod-Enter": createEntryBelow }),
     keymap(baseKeymap),
   ],
 });

@@ -73,6 +73,7 @@ h1 {
   border-radius: 4px;
   cursor: grab;
   position: relative;
+  min-height: 1.5em;
 }
 
 .entrypoint-label {
@@ -152,6 +153,28 @@ h1 {
 
 .entry.entry-hidden {
   display: none;
+}
+
+.char-name-input {
+  box-sizing: border-box;
+  text-align: center;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-family: "Courier New", Courier, monospace;
+  font-size: inherit;
+  line-height: inherit;
+  color: #aaa;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  outline: none;
+  pointer-events: auto;
+  z-index: 100;
+}
+
+.char-name-input::placeholder {
+  color: #555;
+  text-transform: none;
 }
 
 .logo {
