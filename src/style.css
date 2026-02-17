@@ -34,7 +34,7 @@ h1 {
 }
 
 #app {
-  max-width: 600px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: 2rem;
 }
@@ -42,6 +42,9 @@ h1 {
 /* ProseMirror overrides */
 .ProseMirror {
   outline: none;
+  position: relative;
+  padding-left: 240px;
+  padding-right: 240px;
 }
 
 .ProseMirror:focus {
@@ -60,6 +63,8 @@ h1 {
   font-weight: 600;
   color: #aaa;
   text-transform: uppercase;
+  background-color: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
 }
 
 .dialogue-lines .line {
