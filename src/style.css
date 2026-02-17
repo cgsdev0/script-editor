@@ -156,6 +156,25 @@ h1 {
   user-select: none;
 }
 
+.choice-badge {
+  margin-left: 0.4em;
+  font-size: 0.75em;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 0 0.3em;
+  user-select: none;
+}
+
+.choice-badge-cond {
+  color: #e8c356;
+  border: 1px solid #e8c35644;
+}
+
+.choice-badge-effect {
+  color: #c678dd;
+  border: 1px solid #c678dd44;
+}
+
 .choice.choice-dimmed {
   opacity: 0.3;
 }

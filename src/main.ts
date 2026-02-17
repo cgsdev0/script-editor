@@ -90,12 +90,16 @@ export const scriptSchema = new Schema({
         const attrs: Record<string, string> = { class: "choice" };
         if (node.attrs.next) attrs["data-next"] = node.attrs.next;
         if (node.attrs.checked) attrs["data-checked"] = "true";
+        const indicators: DOMOutputSpec[] = [];
+        if (node.attrs.cond) indicators.push(["span", { class: "choice-badge choice-badge-cond", contenteditable: "false" }, "?"]);
+        if (node.attrs.effect) indicators.push(["span", { class: "choice-badge choice-badge-effect", contenteditable: "false" }, "!"]);
         return [
           "div",
           attrs,
           ["span", { class: "choice-checkbox", contenteditable: "false" }, node.attrs.checked ? "\u2611" : "\u2610"],
           ["span", { class: "drag-handle", contenteditable: "false", draggable: "true" }, "\u2847"],
           ["span", { class: "choice-text" }, 0],
+          ...indicators,
         ];
       },
     },
@@ -160,7 +164,7 @@ let overlay: HTMLElement;
 let customDragActive = false;
 
 let charNameMousedown: { x: number; y: number; target: HTMLElement } | null = null;
-let activeJsonEditor: { popup: HTMLElement; cmView: CMEditorView; save: () => void; cleanup: () => void } | null = null;
+let activeJsonEditor: { popup: HTMLElement; cmView: CMEditorView; save: () => void; cleanup: () => void; entryId: string } | null = null;
 
 let entryIdCounter = 0;
 function generateEntryId(): string {
@@ -1130,7 +1134,7 @@ function removeEntry(view: EditorView, id: string) {
   view.dispatch(tr);
 }
 
-function finalizeDialogue(view: EditorView, id: string, charName: string) {
+function finalizeDialogue(view: EditorView, id: string, charName: string, sourceEntryId?: string) {
   const found = findEntryPosByID(view.state.doc, id);
   if (!found) return;
   // replace the dialogue node entirely so ProseMirror re-renders the char-name text
@@ -1140,7 +1144,20 @@ function finalizeDialogue(view: EditorView, id: string, charName: string) {
     { ...dialogueNode.attrs, char: charName },
     dialogueNode.content,
   );
-  const tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, newDialogue);
+  let tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, newDialogue);
+
+  // auto-link: if created from a dialogue node, set that dialogue's next to this entry
+  if (sourceEntryId) {
+    const sourceFound = findEntryPosByID(tr.doc, sourceEntryId);
+    if (sourceFound) {
+      const sourceInner = sourceFound.node.firstChild!;
+      if (sourceInner.type.name === "dialogue") {
+        const sourceDialoguePos = sourceFound.pos + 1;
+        tr = tr.setNodeMarkup(sourceDialoguePos, null, { ...sourceInner.attrs, next: id });
+      }
+    }
+  }
+
   view.dispatch(tr);
   // focus the first line in the new entry
   requestAnimationFrame(() => {
@@ -1155,7 +1172,7 @@ function finalizeDialogue(view: EditorView, id: string, charName: string) {
   });
 }
 
-function convertToDecision(view: EditorView, id: string) {
+function convertToDecision(view: EditorView, id: string, sourceEntryId?: string) {
   const found = findEntryPosByID(view.state.doc, id);
   if (!found) return;
   // replace the dialogue node with a decision node containing one empty choice
@@ -1164,7 +1181,20 @@ function convertToDecision(view: EditorView, id: string) {
   const decision = scriptSchema.nodes.decision.create(null, [
     scriptSchema.nodes.choice.create(null),
   ]);
-  const tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, decision);
+  let tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, decision);
+
+  // auto-link: if created from a dialogue node, set that dialogue's next to this entry
+  if (sourceEntryId) {
+    const sourceFound = findEntryPosByID(tr.doc, sourceEntryId);
+    if (sourceFound) {
+      const sourceInner = sourceFound.node.firstChild!;
+      if (sourceInner.type.name === "dialogue") {
+        const sourceDialoguePos = sourceFound.pos + 1;
+        tr = tr.setNodeMarkup(sourceDialoguePos, null, { ...sourceInner.attrs, next: id });
+      }
+    }
+  }
+
   view.dispatch(tr);
   // focus the first choice-text in the new entry
   requestAnimationFrame(() => {
@@ -1179,7 +1209,7 @@ function convertToDecision(view: EditorView, id: string) {
   });
 }
 
-function showNameInput(view: EditorView, id: string) {
+function showNameInput(view: EditorView, id: string, sourceEntryId?: string) {
   // find the char-name element for this entry
   const entryEl = view.dom.querySelector(`.entry[data-entry-id="${id}"]`);
   if (!entryEl) return;
@@ -1223,9 +1253,9 @@ function showNameInput(view: EditorView, id: string) {
         return;
       }
       if (value === "PLAYER") {
-        convertToDecision(view, id);
+        convertToDecision(view, id, sourceEntryId);
       } else {
-        finalizeDialogue(view, id, value);
+        finalizeDialogue(view, id, value, sourceEntryId);
       }
     });
   }
@@ -1281,9 +1311,47 @@ function createEntryBelow(state: EditorState, dispatch?: (tr: any) => void, view
         scriptSchema.nodes.line.create(),
       ),
     );
-    const tr = state.tr.insert(insertPos, newEntry);
+    let tr = state.tr.insert(insertPos, newEntry);
+
+    // auto-link from decision choices
+    const entryNode = $from.node(depth);
+    const inner = entryNode.firstChild;
+    if (inner && inner.type.name === "decision") {
+      // find the choice the cursor is in
+      let choiceDepth = $from.depth;
+      while (choiceDepth > 0 && $from.node(choiceDepth).type.name !== "choice") choiceDepth--;
+      const cursorChoice = choiceDepth > 0 ? $from.node(choiceDepth) : null;
+
+      let linked = false;
+      // if cursor is in an unchecked choice with no connection, link that choice
+      if (cursorChoice && !cursorChoice.attrs.checked && !cursorChoice.attrs.next) {
+        const choicePos = $from.before(choiceDepth);
+        tr = tr.setNodeMarkup(choicePos, null, { ...cursorChoice.attrs, next: newId });
+        linked = true;
+      }
+
+      // otherwise, if exactly 1 checked choice, link that
+      if (!linked) {
+        const checkedChoices: { offset: number; node: PMNode }[] = [];
+        inner.forEach((child, offset) => {
+          if (child.type.name === "choice" && child.attrs.checked) {
+            checkedChoices.push({ offset, node: child });
+          }
+        });
+        if (checkedChoices.length === 1) {
+          const entryPos = $from.before(depth);
+          const choicePos = entryPos + 1 + 1 + checkedChoices[0].offset;
+          tr = tr.setNodeMarkup(choicePos, null, { ...checkedChoices[0].node.attrs, next: newId });
+        }
+      }
+    }
+
+    const sourceEntryNode = $from.node(depth);
+    const sourceInner = sourceEntryNode.firstChild;
+    const sourceId = sourceInner?.type.name === "dialogue" ? sourceEntryNode.attrs.id : undefined;
+
     dispatch(tr);
-    requestAnimationFrame(() => showNameInput(view, newId));
+    requestAnimationFrame(() => showNameInput(view, newId, sourceId));
   }
   return true;
 }
@@ -1364,7 +1432,13 @@ function closeJsonEditor(view: EditorView) {
 }
 
 function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
-  if (activeJsonEditor) closeJsonEditor(view);
+  const entryEl = charNameEl.closest(".entry") as HTMLElement | null;
+  const clickedEntryId = entryEl?.dataset.entryId ?? null;
+  if (activeJsonEditor) {
+    const same = clickedEntryId !== null && activeJsonEditor.entryId === clickedEntryId;
+    closeJsonEditor(view);
+    if (same) return;
+  }
 
   const dataOrNull = buildNodeJson(view, charNameEl);
   if (!dataOrNull) return;
@@ -1518,9 +1592,10 @@ function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
     }),
   });
 
-  // click outside to close (auto-saves)
+  // click outside to close (auto-saves) — skip char-name-link clicks, those toggle via mouseup
   function handleClickOutside(e: MouseEvent) {
-    if (!popup.contains(e.target as Node)) {
+    const target = e.target as HTMLElement;
+    if (!popup.contains(target) && !target.closest(".char-name-link")) {
       closeJsonEditor(view);
     }
   }
@@ -1536,6 +1611,7 @@ function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
   activeJsonEditor = {
     popup,
     cmView,
+    entryId: data.entryNode.attrs.id,
     save: doSave,
     cleanup: () => {
       document.removeEventListener("mousedown", handleClickOutside, true);
