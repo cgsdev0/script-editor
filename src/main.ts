@@ -11,6 +11,10 @@ import { EditorState as CMEditorState } from "@codemirror/state";
 import { json as jsonLang } from "@codemirror/lang-json";
 import { basicSetup } from "codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
+import * as Y from "yjs";
+import { prosemirrorJSONToYDoc } from "y-prosemirror";
+import { undo, redo } from "y-prosemirror";
+import * as collab from "./collab.ts";
 
 export const scriptSchema = new Schema({
   nodes: {
@@ -179,7 +183,7 @@ let activeJsonEditor: { popup: HTMLElement; cmView: CMEditorView; save: () => vo
 
 let entryIdCounter = 0;
 function generateEntryId(): string {
-  return `new_${++entryIdCounter}_${Date.now()}`;
+  return `new_${++entryIdCounter}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 // maps SVG group elements to the source DOM element that owns the `next` attr
@@ -1432,6 +1436,7 @@ function dismissJsonEditor(view: EditorView) {
   activeJsonEditor.popup.remove();
   activeJsonEditor.cleanup();
   activeJsonEditor = null;
+  collab.provider.awareness.setLocalStateField("editing", null);
   view.focus();
 }
 
@@ -1628,9 +1633,9 @@ function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
       document.removeEventListener("mousedown", handleClickOutside, true);
     },
   };
+  collab.provider.awareness.setLocalStateField("editing", data.entryNode.attrs.id);
 }
 
-const doc = linesToDoc(lines);
 function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
   const { $from } = state.selection;
   // find the nearest text-containing parent (line or choice)
@@ -1645,14 +1650,6 @@ function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
   return true;
 }
 
-const editorState = EditorState.create({
-  doc,
-  plugins: [
-    keymap({ "Mod-a": selectBlock, "Mod-Enter": createEntryBelow }),
-    keymap(baseKeymap),
-  ],
-});
-
 let refreshPending = false;
 function scheduleRefresh(v: EditorView) {
   if (refreshPending) return;
@@ -1663,6 +1660,7 @@ function scheduleRefresh(v: EditorView) {
   });
 }
 
+// DOM setup (synchronous — doesn't depend on Y.Doc)
 const wrapper = document.createElement("div");
 wrapper.style.position = "relative";
 document.querySelector("#app")!.appendChild(wrapper);
@@ -1675,120 +1673,189 @@ overlay.style.width = "100%";
 overlay.style.height = "100%";
 overlay.style.pointerEvents = "none";
 
-const view = new EditorView(wrapper, {
-  state: editorState,
-  handleDOMEvents: {
-    mousedown(_view, event) {
-      const target = event.target as HTMLElement;
-      const charNameEl = target.closest(".char-name") as HTMLElement | null;
-      if (charNameEl) {
-        // only track for JSON editor if clicking the link text itself
-        if (target.closest(".char-name-link")) {
-          charNameMousedown = { x: event.clientX, y: event.clientY, target: charNameEl };
-        }
-        return true;
-      }
-      if (target.closest(".drag-handle")) {
-        return true;
-      }
-      return false;
-    },
-    mouseup(pmView, event) {
-      if (charNameMousedown) {
-        const dx = event.clientX - charNameMousedown.x;
-        const dy = event.clientY - charNameMousedown.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const tgt = charNameMousedown.target;
-        charNameMousedown = null;
-        if (dist < 5) {
-          openJsonEditor(pmView, tgt);
-          return true;
-        }
-      }
-      return false;
-    },
-    dragstart(_view, event) {
-      charNameMousedown = null;
-      const target = event.target as HTMLElement;
-      if (target.closest(".drag-handle") || target.closest(".char-name")) {
-        return true;
-      }
-      return false;
-    },
-    dragover() {
-      return customDragActive;
-    },
-    drop() {
-      return customDragActive;
-    },
-    dragend() {
-      return customDragActive;
-    },
-  },
-  dispatchTransaction(tr) {
-    const newState = view.state.apply(tr);
-    view.updateState(newState);
-    scheduleRefresh(view);
-  },
-});
+let view: EditorView;
 
-wrapper.appendChild(overlay);
+// Wait for initial Yjs sync before creating the editor
+collab.provider.on("sync", (synced: boolean) => {
+  if (!synced || view) return;
 
-// draw arrows after initial render
-requestAnimationFrame(() => refresh(view));
-setupArrowInteraction(view);
-setupDragDrop(view);
-
-// checkbox toggles via ProseMirror transactions
-view.dom.addEventListener("click", (e) => {
-  const target = e.target as HTMLElement;
-  if (!target.classList.contains("choice-checkbox")) return;
-
-  const choiceEl = target.closest(".choice") as HTMLElement;
-  if (!choiceEl) return;
-
-  const pos = view.posAtDOM(choiceEl, 0);
-  const $pos = view.state.doc.resolve(pos);
-
-  // find choice node depth
-  let depth = $pos.depth;
-  while (depth > 0 && $pos.node(depth).type.name !== "choice") depth--;
-  if (depth === 0) return;
-
-  const choiceNode = $pos.node(depth);
-  const choicePos = $pos.before(depth);
-  const newChecked = !choiceNode.attrs.checked;
-
-  // check if toggling would make all checked → reset all
-  const decisionNode = $pos.node(depth - 1);
-  let allWouldBeChecked = true;
-  decisionNode.forEach((child) => {
-    if (child.type.name === "choice") {
-      const wouldBe = child === choiceNode ? newChecked : child.attrs.checked;
-      if (!wouldBe) allWouldBeChecked = false;
-    }
-  });
-
-  let tr = view.state.tr;
-  if (allWouldBeChecked) {
-    // uncheck all choices in this decision
-    const decisionPos = $pos.before(depth - 1);
-    let offset = 1; // skip into decision content
-    decisionNode.forEach((child) => {
-      if (child.type.name === "choice" && child.attrs.checked) {
-        tr = tr.setNodeMarkup(decisionPos + offset, null, {
-          ...child.attrs,
-          checked: false,
-        });
-      }
-      offset += child.nodeSize;
-    });
-  } else {
-    tr = tr.setNodeMarkup(choicePos, null, {
-      ...choiceNode.attrs,
-      checked: newChecked,
-    });
+  // Seed the Y.Doc on first load (empty document)
+  if (collab.yXmlFragment.length === 0) {
+    const pmDoc = linesToDoc(lines);
+    const tempYDoc = prosemirrorJSONToYDoc(scriptSchema, pmDoc.toJSON());
+    const update = Y.encodeStateAsUpdate(tempYDoc);
+    Y.applyUpdate(collab.ydoc, update);
+    tempYDoc.destroy();
   }
 
-  view.dispatch(tr);
+  const editorState = EditorState.create({
+    schema: scriptSchema,
+    plugins: [
+      ...collab.plugins,
+      keymap({
+        "Mod-z": undo,
+        "Mod-y": redo,
+        "Mod-Shift-z": redo,
+        "Mod-a": selectBlock,
+        "Mod-Enter": createEntryBelow,
+      }),
+      keymap(baseKeymap),
+    ],
+  });
+
+  view = new EditorView(wrapper, {
+    state: editorState,
+    handleDOMEvents: {
+      mousedown(_view, event) {
+        const target = event.target as HTMLElement;
+        const charNameEl = target.closest(".char-name") as HTMLElement | null;
+        if (charNameEl) {
+          // only track for JSON editor if clicking the link text itself
+          if (target.closest(".char-name-link")) {
+            charNameMousedown = { x: event.clientX, y: event.clientY, target: charNameEl };
+          }
+          return true;
+        }
+        if (target.closest(".drag-handle")) {
+          return true;
+        }
+        return false;
+      },
+      mouseup(pmView, event) {
+        if (charNameMousedown) {
+          const dx = event.clientX - charNameMousedown.x;
+          const dy = event.clientY - charNameMousedown.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const tgt = charNameMousedown.target;
+          charNameMousedown = null;
+          if (dist < 5) {
+            openJsonEditor(pmView, tgt);
+            return true;
+          }
+        }
+        return false;
+      },
+      dragstart(_view, event) {
+        charNameMousedown = null;
+        const target = event.target as HTMLElement;
+        if (target.closest(".drag-handle") || target.closest(".char-name")) {
+          return true;
+        }
+        return false;
+      },
+      dragover() {
+        return customDragActive;
+      },
+      drop() {
+        return customDragActive;
+      },
+      dragend() {
+        return customDragActive;
+      },
+    },
+    dispatchTransaction(this: EditorView, tr) {
+      const newState = this.state.apply(tr);
+      this.updateState(newState);
+      scheduleRefresh(this);
+    },
+  });
+
+  wrapper.appendChild(overlay);
+
+  // draw arrows after initial render
+  requestAnimationFrame(() => refresh(view));
+  setupArrowInteraction(view);
+  setupDragDrop(view);
+
+  // Remote editing indicators on char-name headers
+  function updateEditingIndicators() {
+    const obs = (view as any).domObserver;
+    obs?.stop?.();
+    // clear old indicators
+    view.dom.querySelectorAll(".editing-indicator").forEach((el) => el.remove());
+    view.dom.querySelectorAll(".char-name-editing").forEach((el) => {
+      el.classList.remove("char-name-editing");
+      (el as HTMLElement).style.removeProperty("--editor-color");
+    });
+
+    const localClientId = collab.ydoc.clientID;
+    collab.provider.awareness.getStates().forEach((state, clientId) => {
+      if (clientId === localClientId) return;
+      const editingId = state.editing;
+      if (!editingId) return;
+      const user = state.user;
+      if (!user) return;
+
+      const entryEl = view.dom.querySelector(`.entry[data-entry-id="${editingId}"]`);
+      if (!entryEl) return;
+      const charName = entryEl.querySelector(".char-name") as HTMLElement;
+      if (!charName) return;
+
+      charName.classList.add("char-name-editing");
+      charName.style.setProperty("--editor-color", user.color);
+
+      const tag = document.createElement("span");
+      tag.className = "editing-indicator";
+      tag.textContent = user.name;
+      tag.style.backgroundColor = user.color;
+      charName.appendChild(tag);
+    });
+    obs?.start?.();
+  }
+
+  collab.provider.awareness.on("change", updateEditingIndicators);
+
+  // checkbox toggles via ProseMirror transactions
+  view.dom.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("choice-checkbox")) return;
+
+    const choiceEl = target.closest(".choice") as HTMLElement;
+    if (!choiceEl) return;
+
+    const pos = view.posAtDOM(choiceEl, 0);
+    const $pos = view.state.doc.resolve(pos);
+
+    // find choice node depth
+    let depth = $pos.depth;
+    while (depth > 0 && $pos.node(depth).type.name !== "choice") depth--;
+    if (depth === 0) return;
+
+    const choiceNode = $pos.node(depth);
+    const choicePos = $pos.before(depth);
+    const newChecked = !choiceNode.attrs.checked;
+
+    // check if toggling would make all checked → reset all
+    const decisionNode = $pos.node(depth - 1);
+    let allWouldBeChecked = true;
+    decisionNode.forEach((child) => {
+      if (child.type.name === "choice") {
+        const wouldBe = child === choiceNode ? newChecked : child.attrs.checked;
+        if (!wouldBe) allWouldBeChecked = false;
+      }
+    });
+
+    let tr = view.state.tr;
+    if (allWouldBeChecked) {
+      // uncheck all choices in this decision
+      const decisionPos = $pos.before(depth - 1);
+      let offset = 1; // skip into decision content
+      decisionNode.forEach((child) => {
+        if (child.type.name === "choice" && child.attrs.checked) {
+          tr = tr.setNodeMarkup(decisionPos + offset, null, {
+            ...child.attrs,
+            checked: false,
+          });
+        }
+        offset += child.nodeSize;
+      });
+    } else {
+      tr = tr.setNodeMarkup(choicePos, null, {
+        ...choiceNode.attrs,
+        checked: newChecked,
+      });
+    }
+
+    view.dispatch(tr);
+  });
 });

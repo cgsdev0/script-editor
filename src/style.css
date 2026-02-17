@@ -274,6 +274,59 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+/* Remote cursor styles (y-prosemirror) */
+.ProseMirror-yjs-selection {
+  background-color: var(--user-color-light, rgba(100, 160, 255, 0.3));
+}
+
+.yjs-cursor {
+  position: relative;
+  display: inline;
+  width: 0;
+  overflow: visible;
+  border-left: 2px solid currentColor;
+  margin-left: -1px;
+  margin-right: -1px;
+}
+
+.yjs-cursor::after {
+  content: attr(data-user);
+  position: absolute;
+  left: -2px;
+  bottom: 100%;
+  font-size: 0.65em;
+  font-weight: 600;
+  color: #fff;
+  background: var(--cursor-color, #6eeb83);
+  padding: 1px 4px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1.4;
+}
+
+/* Remote user editing a node's JSON */
+.char-name-editing {
+  outline: 2px solid var(--editor-color, #6eeb83);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.editing-indicator {
+  position: absolute;
+  right: 0.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6em;
+  font-weight: 600;
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  text-transform: none;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;
