@@ -16,7 +16,12 @@
     "vite": "^8.0.0-beta.13"
   },
   "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/state": "^6.5.4",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.39.14",
     "arktype": "^2.1.29",
+    "codemirror": "^6.0.2",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-keymap": "^1.2.3",
     "prosemirror-model": "^1.25.4",

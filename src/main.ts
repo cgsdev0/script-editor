@@ -6,6 +6,11 @@ import { EditorView } from "prosemirror-view";
 import { baseKeymap } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
 import { lines } from "./schema.ts";
+import { EditorView as CMEditorView, keymap as cmKeymap } from "@codemirror/view";
+import { EditorState as CMEditorState } from "@codemirror/state";
+import { json as jsonLang } from "@codemirror/lang-json";
+import { basicSetup } from "codemirror";
+import { oneDark } from "@codemirror/theme-one-dark";
 
 export const scriptSchema = new Schema({
   nodes: {
@@ -27,6 +32,7 @@ export const scriptSchema = new Schema({
         trigger: { default: null },
         unskippable: { default: false },
         randomize: { default: false },
+        extra: { default: null },
       },
       content: "line+",
       toDOM(node): DOMOutputSpec {
@@ -35,7 +41,7 @@ export const scriptSchema = new Schema({
         return [
           "div",
           attrs,
-          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, node.attrs.char],
+          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, ["span", { class: "char-name-link" }, node.attrs.char]],
           ["div", { class: "dialogue-lines" }, 0],
         ];
       },
@@ -43,6 +49,7 @@ export const scriptSchema = new Schema({
     line: {
       attrs: {
         trigger: { default: null },
+        extra: { default: null },
       },
       content: "text*",
       toDOM(node): DOMOutputSpec {
@@ -57,12 +64,15 @@ export const scriptSchema = new Schema({
       },
     },
     decision: {
+      attrs: {
+        extra: { default: null },
+      },
       content: "choice+",
       toDOM(): DOMOutputSpec {
         return [
           "div",
           { class: "decision" },
-          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, "PLAYER"],
+          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, ["span", { class: "char-name-link" }, "PLAYER"]],
           ["div", { class: "decision-choices" }, 0],
         ];
       },
@@ -73,6 +83,7 @@ export const scriptSchema = new Schema({
         effect: { default: null },
         cond: { default: null },
         checked: { default: false },
+        extra: { default: null },
       },
       content: "text*",
       toDOM(node): DOMOutputSpec {
@@ -147,6 +158,9 @@ function linesToDoc(data: typeof lines): PMNode {
 // overlay container for SVGs — sits outside ProseMirror's managed DOM
 let overlay: HTMLElement;
 let customDragActive = false;
+
+let charNameMousedown: { x: number; y: number; target: HTMLElement } | null = null;
+let activeJsonEditor: { popup: HTMLElement; cmView: CMEditorView; save: () => void; cleanup: () => void } | null = null;
 
 let entryIdCounter = 0;
 function generateEntryId(): string {
@@ -1274,6 +1288,261 @@ function createEntryBelow(state: EditorState, dispatch?: (tr: any) => void, view
   return true;
 }
 
+function buildNodeJson(view: EditorView, charNameEl: HTMLElement): {
+  json: Record<string, any>;
+  entryPos: number;
+  nodePos: number;
+  nodeType: "dialogue" | "decision";
+  entryNode: PMNode;
+  innerNode: PMNode;
+} | null {
+  const pos = view.posAtDOM(charNameEl, 0);
+  const $pos = view.state.doc.resolve(pos);
+
+  // walk up to find entry depth
+  let depth = $pos.depth;
+  while (depth > 0 && $pos.node(depth).type.name !== "entry") depth--;
+  if (depth === 0) return null;
+
+  const entryNode = $pos.node(depth);
+  const entryPos = $pos.before(depth);
+  const innerNode = entryNode.firstChild!;
+  const nodePos = entryPos + 1;
+
+  if (innerNode.type.name === "dialogue") {
+    const a = innerNode.attrs;
+    const json: Record<string, any> = { id: entryNode.attrs.id, char: a.char };
+    // extract text from line children — always array of objects
+    const textArr: Record<string, any>[] = [];
+    innerNode.forEach((line) => {
+      const obj: Record<string, any> = { text: line.textContent };
+      if (line.attrs.trigger) obj.trigger = line.attrs.trigger;
+      if (line.attrs.extra) Object.assign(obj, line.attrs.extra);
+      textArr.push(obj);
+    });
+    json.text = textArr;
+    if (a.delay !== null) json.delay = a.delay;
+    if (a.next !== null) json.next = a.next;
+    if (a.trigger !== null) json.trigger = a.trigger;
+    if (a.unskippable) json.unskippable = a.unskippable;
+    if (a.randomize) json.randomize = a.randomize;
+    if (a.extra) Object.assign(json, a.extra);
+    return { json, entryPos, nodePos, nodeType: "dialogue", entryNode, innerNode };
+  } else if (innerNode.type.name === "decision") {
+    const json: Record<string, any> = { id: entryNode.attrs.id };
+    // extract input from choice children
+    const inputArr: any[] = [];
+    innerNode.forEach((choice) => {
+      const obj: Record<string, any> = { text: choice.textContent };
+      if (choice.attrs.next) obj.next = choice.attrs.next;
+      if (choice.attrs.effect) obj.effect = choice.attrs.effect;
+      if (choice.attrs.cond) obj.cond = choice.attrs.cond;
+      if (choice.attrs.extra) Object.assign(obj, choice.attrs.extra);
+      inputArr.push(obj);
+    });
+    json.input = inputArr;
+    if (innerNode.attrs.extra) Object.assign(json, innerNode.attrs.extra);
+    return { json, entryPos, nodePos, nodeType: "decision", entryNode, innerNode };
+  }
+  return null;
+}
+
+function dismissJsonEditor(view: EditorView) {
+  if (!activeJsonEditor) return;
+  activeJsonEditor.cmView.destroy();
+  activeJsonEditor.popup.remove();
+  activeJsonEditor.cleanup();
+  activeJsonEditor = null;
+  view.focus();
+}
+
+function closeJsonEditor(view: EditorView) {
+  if (!activeJsonEditor) return;
+  // auto-save: attempt to apply, silently discard on parse error
+  activeJsonEditor.save();
+  dismissJsonEditor(view);
+}
+
+function openJsonEditor(view: EditorView, charNameEl: HTMLElement) {
+  if (activeJsonEditor) closeJsonEditor(view);
+
+  const dataOrNull = buildNodeJson(view, charNameEl);
+  if (!dataOrNull) return;
+  const data = dataOrNull;
+
+  const popup = document.createElement("div");
+  popup.className = "json-editor-popup";
+
+  const cmContainer = document.createElement("div");
+  cmContainer.className = "json-editor-cm";
+  popup.appendChild(cmContainer);
+
+  const actions = document.createElement("div");
+  actions.className = "json-editor-actions";
+
+  const errorSpan = document.createElement("span");
+  errorSpan.className = "json-editor-error";
+  actions.appendChild(errorSpan);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "json-editor-cancel";
+  cancelBtn.textContent = "Cancel";
+  actions.appendChild(cancelBtn);
+
+  popup.appendChild(actions);
+
+  // position below char-name
+  const wrapperRect = overlay.parentElement!.getBoundingClientRect();
+  const charRect = charNameEl.getBoundingClientRect();
+  popup.style.position = "absolute";
+  popup.style.left = (charRect.left - wrapperRect.left) + "px";
+  popup.style.top = (charRect.bottom - wrapperRect.top + 4) + "px";
+  popup.style.width = charRect.width + "px";
+
+  overlay.appendChild(popup);
+
+  const jsonStr = JSON.stringify(data.json, null, 2);
+
+  function doSave() {
+    if (!activeJsonEditor) return;
+    const text = activeJsonEditor.cmView.state.doc.toString();
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return; // silently skip on invalid JSON
+    }
+
+    const { id, ...rest } = parsed;
+    let tr = view.state.tr;
+
+    // update entry id and all next references if changed
+    const oldId = data.entryNode.attrs.id;
+    if (id !== undefined && id !== oldId) {
+      tr = tr.setNodeMarkup(data.entryPos, null, { ...data.entryNode.attrs, id });
+      // update all dialogue/choice nodes whose next points to the old id
+      tr.doc.descendants((node, pos) => {
+        if (
+          (node.type.name === "dialogue" || node.type.name === "choice") &&
+          node.attrs.next === oldId
+        ) {
+          tr = tr.setNodeMarkup(pos, null, { ...node.attrs, next: id });
+        }
+      });
+    }
+
+    if (data.nodeType === "dialogue") {
+      const { char, delay, next, trigger, unskippable, randomize, text, ...extra } = rest;
+      const newAttrs = {
+        char: char ?? data.innerNode.attrs.char,
+        delay: delay ?? null,
+        next: next ?? null,
+        trigger: trigger ?? null,
+        unskippable: unskippable ?? false,
+        randomize: randomize ?? false,
+        extra: Object.keys(extra).length > 0 ? extra : null,
+      };
+      // rebuild line nodes from text field
+      let content = data.innerNode.content;
+      if (text !== undefined) {
+        const textArray = Array.isArray(text) ? text : [text];
+        const lineNodes = textArray.map((l: any) => {
+          if (typeof l === "string") {
+            return scriptSchema.nodes.line.create(null, l ? scriptSchema.text(l) : undefined);
+          }
+          const { text: lt, trigger: ltrig, ...lineExtra } = l;
+          return scriptSchema.nodes.line.create(
+            {
+              trigger: ltrig ?? null,
+              extra: Object.keys(lineExtra).length > 0 ? lineExtra : null,
+            },
+            lt ? scriptSchema.text(lt) : undefined,
+          );
+        });
+        content = scriptSchema.nodes.dialogue.createChecked(newAttrs, lineNodes).content;
+      }
+      // must use replaceWith to re-render char-name text
+      const newDialogue = scriptSchema.nodes.dialogue.create(newAttrs, content);
+      const mappedNodePos = tr.mapping.map(data.nodePos);
+      const mappedNodeEnd = tr.mapping.map(data.nodePos + data.innerNode.nodeSize);
+      tr = tr.replaceWith(mappedNodePos, mappedNodeEnd, newDialogue);
+    } else if (data.nodeType === "decision") {
+      const { input, ...extra } = rest;
+      const extraAttr = Object.keys(extra).length > 0 ? extra : null;
+      // rebuild choice nodes from input field
+      let content = data.innerNode.content;
+      if (input !== undefined && Array.isArray(input)) {
+        const choiceNodes = input.map((c: any) => {
+          const { text: ct, next: cn, effect: ce, cond: cc, checked: ck, ...choiceExtra } = c;
+          return scriptSchema.nodes.choice.create(
+            {
+              next: cn ?? null,
+              effect: ce ?? null,
+              cond: cc ?? null,
+              checked: ck ?? false,
+              extra: Object.keys(choiceExtra).length > 0 ? choiceExtra : null,
+            },
+            ct ? scriptSchema.text(ct) : undefined,
+          );
+        });
+        content = scriptSchema.nodes.decision.createChecked({ extra: extraAttr }, choiceNodes).content;
+      }
+      const newDecision = scriptSchema.nodes.decision.create({ extra: extraAttr }, content);
+      const mappedNodePos = tr.mapping.map(data.nodePos);
+      const mappedNodeEnd = tr.mapping.map(data.nodePos + data.innerNode.nodeSize);
+      tr = tr.replaceWith(mappedNodePos, mappedNodeEnd, newDecision);
+    }
+
+    view.dispatch(tr);
+    requestAnimationFrame(() => refresh(view));
+  }
+
+  const cmView = new CMEditorView({
+    parent: cmContainer,
+    state: CMEditorState.create({
+      doc: jsonStr,
+      extensions: [
+        basicSetup,
+        jsonLang(),
+        oneDark,
+        cmKeymap.of([
+          {
+            key: "Escape",
+            run: () => { dismissJsonEditor(view); return true; },
+          },
+        ]),
+        CMEditorView.theme({
+          "&": { fontSize: "13px" },
+        }),
+      ],
+    }),
+  });
+
+  // click outside to close (auto-saves)
+  function handleClickOutside(e: MouseEvent) {
+    if (!popup.contains(e.target as Node)) {
+      closeJsonEditor(view);
+    }
+  }
+  // delay so the current click doesn't immediately close it
+  requestAnimationFrame(() => {
+    document.addEventListener("mousedown", handleClickOutside, true);
+  });
+
+  cancelBtn.addEventListener("click", () => dismissJsonEditor(view));
+
+  cmView.focus();
+
+  activeJsonEditor = {
+    popup,
+    cmView,
+    save: doSave,
+    cleanup: () => {
+      document.removeEventListener("mousedown", handleClickOutside, true);
+    },
+  };
+}
+
 const doc = linesToDoc(lines);
 function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
   const { $from } = state.selection;
@@ -1324,12 +1593,35 @@ const view = new EditorView(wrapper, {
   handleDOMEvents: {
     mousedown(_view, event) {
       const target = event.target as HTMLElement;
-      if (target.closest(".drag-handle") || target.closest(".char-name")) {
+      const charNameEl = target.closest(".char-name") as HTMLElement | null;
+      if (charNameEl) {
+        // only track for JSON editor if clicking the link text itself
+        if (target.closest(".char-name-link")) {
+          charNameMousedown = { x: event.clientX, y: event.clientY, target: charNameEl };
+        }
+        return true;
+      }
+      if (target.closest(".drag-handle")) {
         return true;
       }
       return false;
     },
+    mouseup(pmView, event) {
+      if (charNameMousedown) {
+        const dx = event.clientX - charNameMousedown.x;
+        const dy = event.clientY - charNameMousedown.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const tgt = charNameMousedown.target;
+        charNameMousedown = null;
+        if (dist < 5) {
+          openJsonEditor(pmView, tgt);
+          return true;
+        }
+      }
+      return false;
+    },
     dragstart(_view, event) {
+      charNameMousedown = null;
       const target = event.target as HTMLElement;
       if (target.closest(".drag-handle") || target.closest(".char-name")) {
         return true;

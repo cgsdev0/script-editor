@@ -76,6 +76,15 @@ h1 {
   min-height: 1.5em;
 }
 
+.char-name-link {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.char-name-link:hover {
+  text-decoration: underline;
+}
+
 .entrypoint-label {
   position: absolute;
   left: 0.4em;
@@ -175,6 +184,35 @@ h1 {
 .char-name-input::placeholder {
   color: #555;
   text-transform: none;
+}
+
+.json-editor-popup {
+  pointer-events: auto;
+  z-index: 200;
+  background: #1e1e1e;
+  border: 1px solid #555;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.json-editor-popup .cm-editor {
+  max-height: 300px;
+  min-height: 80px;
+}
+
+.json-editor-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  border-top: 1px solid #333;
+  background: #1a1a1a;
+}
+
+.json-editor-error {
+  color: #e85050;
+  font-size: 0.8em;
 }
 
 .logo {
