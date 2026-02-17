@@ -738,9 +738,11 @@ function setupArrowInteraction(view: EditorView) {
     dragLine.setAttribute("x2", String(mx));
     dragLine.setAttribute("y2", String(my));
 
-    // highlight entry under cursor
+    // highlight entry under cursor (skip self)
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const entry = el?.closest(".entry") as HTMLElement | null;
+    let entry = el?.closest(".entry") as HTMLElement | null;
+    const sourceEntry = dragSourceEl?.closest(".entry") as HTMLElement | null;
+    if (entry && entry === sourceEntry) entry = null;
 
     const obs = (view as any).domObserver;
     obs?.stop?.();
@@ -766,16 +768,20 @@ function setupArrowInteraction(view: EditorView) {
       const targetId = hoveredEntry.dataset.entryId;
 
       if (targetId && dragSourceEl) {
-        const pos = view.posAtDOM(dragSourceEl, 0);
-        const $pos = view.state.doc.resolve(pos);
-        const nodePos = $pos.before($pos.depth);
-        const node = $pos.parent;
+        const sourceEntry = dragSourceEl.closest(".entry") as HTMLElement | null;
+        const sourceId = sourceEntry?.dataset.entryId;
+        if (targetId !== sourceId) {
+          const pos = view.posAtDOM(dragSourceEl, 0);
+          const $pos = view.state.doc.resolve(pos);
+          const nodePos = $pos.before($pos.depth);
+          const node = $pos.parent;
 
-        const tr = view.state.tr.setNodeMarkup(nodePos, null, {
-          ...node.attrs,
-          next: targetId,
-        });
-        view.dispatch(tr);
+          const tr = view.state.tr.setNodeMarkup(nodePos, null, {
+            ...node.attrs,
+            next: targetId,
+          });
+          view.dispatch(tr);
+        }
       }
     }
 
@@ -836,6 +842,16 @@ function setupDragDrop(view: EditorView) {
         : el.classList.contains("entry-hidden");
     const skipSibling = (n: Element) =>
       n === dragSource || !n.matches(selector) || isHidden(n);
+    const nextVisible = (el: Element): Element | null => {
+      let n = el.nextElementSibling;
+      while (n && (!n.matches(selector) || isHidden(n))) n = n.nextElementSibling;
+      return n;
+    };
+    const prevVisible = (el: Element): Element | null => {
+      let n = el.previousElementSibling;
+      while (n && (!n.matches(selector) || isHidden(n))) n = n.previousElementSibling;
+      return n;
+    };
 
     let el = (e.target as HTMLElement).closest(selector) as HTMLElement;
 
@@ -923,6 +939,18 @@ function setupDragDrop(view: EditorView) {
       insertAfterIndicator = false;
       el.classList.add("drag-over-top");
     }
+
+    // suppress indicator if drop would be a no-op
+    if (indicatorEl) {
+      const isNoOp = insertAfterIndicator
+        ? nextVisible(indicatorEl) === dragSource
+        : prevVisible(indicatorEl) === dragSource || indicatorEl === nextVisible(dragSource);
+      if (isNoOp) {
+        indicatorEl.classList.remove("drag-over-top", "drag-over-bottom");
+        indicatorEl = null;
+      }
+    }
+
     obs?.start?.();
   });
 
