@@ -1,5 +1,5 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: "Courier New", Courier, monospace;
   line-height: 1.5;
   font-weight: 400;
 
@@ -24,8 +24,6 @@ a:hover {
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
 }
@@ -36,10 +34,52 @@ h1 {
 }
 
 #app {
-  max-width: 1280px;
+  max-width: 600px;
   margin: 0 auto;
   padding: 2rem;
+}
+
+/* ProseMirror overrides */
+.ProseMirror {
+  outline: none;
+}
+
+.ProseMirror:focus {
+  outline: none;
+}
+
+/* Entry */
+.entry {
+  margin-bottom: 1.5rem;
+}
+
+
+/* Dialogue */
+.char-name {
   text-align: center;
+  font-weight: 600;
+  color: #aaa;
+  text-transform: uppercase;
+}
+
+.dialogue-lines .line {
+  margin: 0.15rem 0;
+  padding: 0;
+}
+
+/* Decision / Choices */
+.decision {
+  padding: 0;
+}
+
+.choice {
+  margin: 0.15rem 0;
+  color: #7ec8e3;
+}
+
+.choice::before {
+  content: "> ";
+  color: #555;
 }
 
 .logo {

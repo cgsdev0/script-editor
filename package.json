@@ -16,6 +16,9 @@
     "vite": "^8.0.0-beta.13"
   },
   "dependencies": {
-    "arktype": "^2.1.29"
+    "arktype": "^2.1.29",
+    "prosemirror-model": "^1.25.4",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.6"
   }
 }
