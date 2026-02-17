@@ -1,3 +1,36 @@
+import { type } from "arktype";
+const Choice = type({
+  text: "string",
+  "next?": "string",
+  "effect?": "string | string[]",
+  "cond?": "string | string[]",
+});
+const Decision = type({
+  input: Choice.array(),
+});
+const Line = type.or(
+  "string",
+  type({
+    "delay?": "number",
+    "text?": "string",
+    "trigger?": "string",
+  }),
+);
+const Dialogue = type({
+  char: "string",
+  "delay?": "number",
+  "unskippable?": "boolean",
+  "randomize?": "boolean",
+  text: type.or(Line, Line.array()),
+  "trigger?": "string",
+  "next?": "string",
+});
+
+const Node = type.or(Decision, Dialogue);
+const Encounter = type({
+  "[string]": Node,
+});
+
 export const lines = {
   intro: {
     input: [
@@ -1782,3 +1815,12 @@ export const lines = {
     trigger: "ESCAPE",
   },
 };
+
+const out = Encounter(lines);
+if (out instanceof type.errors) {
+  // hover out.summary to see validation errors
+  console.error(out.summary);
+} else {
+  // hover out to see your validated data
+  console.log(`Valid!`);
+}
