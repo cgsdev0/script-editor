@@ -46,10 +46,12 @@ export const scriptSchema = new Schema({
       toDOM(node): DOMOutputSpec {
         const attrs: Record<string, string> = { class: "dialogue" };
         if (node.attrs.next) attrs["data-next"] = node.attrs.next;
+        const charNameChildren: DOMOutputSpec[] = [["span", { class: "char-name-link" }, node.attrs.char]];
+        if (node.attrs.trigger) charNameChildren.push(["span", { class: "trigger-badge", contenteditable: "false" }, node.attrs.trigger]);
         return [
           "div",
           attrs,
-          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, ["span", { class: "char-name-link" }, node.attrs.char]],
+          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, ...charNameChildren],
           ["div", { class: "dialogue-lines" }, 0],
         ];
       },
@@ -1350,6 +1352,21 @@ function convertToDecision(view: EditorView, id: string, sourceEntryId?: string)
   });
 }
 
+function getExistingCharNames(view: EditorView): string[] {
+  const names = new Set<string>();
+  view.state.doc.forEach((node) => {
+    if (node.type.name === "entry") {
+      const inner = node.firstChild;
+      if (inner?.type.name === "dialogue" && inner.attrs.char) {
+        names.add(inner.attrs.char.toUpperCase());
+      }
+    }
+  });
+  // Always include PLAYER as an option
+  names.add("PLAYER");
+  return Array.from(names).sort();
+}
+
 function showNameInput(view: EditorView, id: string, sourceEntryId?: string) {
   // find the char-name element for this entry
   const entryEl = view.dom.querySelector(`.entry[data-entry-id="${id}"]`);
@@ -1359,8 +1376,56 @@ function showNameInput(view: EditorView, id: string, sourceEntryId?: string) {
 
   const input = document.createElement("input");
   input.className = "char-name-input";
-  input.placeholder = "CHARACTER";
+  input.placeholder = "@autocomplete or type name";
   input.type = "text";
+  input.value = "@";
+
+  // Autocomplete dropdown
+  const dropdown = document.createElement("div");
+  dropdown.className = "name-autocomplete";
+  const allNames = getExistingCharNames(view);
+  let filtered: string[] = allNames;
+  let selectedIdx = 0;
+
+  function isAutocompleteMode() {
+    return input.value.startsWith("@");
+  }
+
+  function updateDropdown() {
+    if (!isAutocompleteMode()) {
+      filtered = [];
+      selectedIdx = -1;
+      renderDropdown();
+      return;
+    }
+    const query = input.value.slice(1).trim().toUpperCase();
+    filtered = query
+      ? allNames.filter((n) => n.startsWith(query))
+      : allNames;
+    selectedIdx = filtered.length > 0 ? 0 : -1;
+    renderDropdown();
+  }
+
+  function renderDropdown() {
+    dropdown.innerHTML = "";
+    if (filtered.length === 0) {
+      dropdown.style.display = "none";
+      return;
+    }
+    dropdown.style.display = "block";
+    filtered.forEach((name, i) => {
+      const item = document.createElement("div");
+      item.className = "name-autocomplete-item" + (i === selectedIdx ? " selected" : "");
+      item.textContent = name;
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        input.value = name;
+        dropdown.style.display = "none";
+        commit();
+      });
+      dropdown.appendChild(item);
+    });
+  }
 
   // position over the char-name element
   function positionInput() {
@@ -1371,19 +1436,36 @@ function showNameInput(view: EditorView, id: string, sourceEntryId?: string) {
     input.style.top = charRect.top - wrapperRect.top + "px";
     input.style.width = charRect.width + "px";
     input.style.height = charRect.height + "px";
+    dropdown.style.position = "absolute";
+    dropdown.style.left = charRect.left - wrapperRect.left + "px";
+    dropdown.style.top = charRect.bottom - wrapperRect.top + 2 + "px";
+    dropdown.style.width = charRect.width + "px";
   }
   positionInput();
 
   overlay.appendChild(input);
+  overlay.appendChild(dropdown);
   activeNameInput = input;
   input.focus();
+  // place cursor after the @
+  input.setSelectionRange(1, 1);
+  // show initial dropdown with all names
+  renderDropdown();
 
   let committed = false;
 
   function commit() {
     if (committed) return;
     committed = true;
-    const value = input.value.trim().toUpperCase();
+    let value: string;
+    if (isAutocompleteMode()) {
+      // In autocomplete mode, use the selected suggestion
+      value = selectedIdx >= 0 && filtered[selectedIdx]
+        ? filtered[selectedIdx]
+        : input.value.slice(1).trim().toUpperCase();
+    } else {
+      value = input.value.trim().toUpperCase();
+    }
     // defer cleanup so the input stays in the DOM through the keydown event,
     // preventing focus from falling to ProseMirror and re-dispatching Enter
     requestAnimationFrame(() => {
@@ -1411,11 +1493,23 @@ function showNameInput(view: EditorView, id: string, sourceEntryId?: string) {
 
   function cleanup() {
     input.remove();
+    dropdown.remove();
     activeNameInput = null;
   }
 
+  input.addEventListener("input", updateDropdown);
+
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
+    if (e.key === "Tab" && isAutocompleteMode() && filtered.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) {
+        selectedIdx = selectedIdx <= 0 ? filtered.length - 1 : selectedIdx - 1;
+      } else {
+        selectedIdx = (selectedIdx + 1) % filtered.length;
+      }
+      renderDropdown();
+    } else if (e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
       commit();
@@ -1884,6 +1978,37 @@ exportBtn.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 toolbar.appendChild(exportBtn);
+
+const importBtn = document.createElement("button");
+importBtn.className = "export-btn";
+importBtn.textContent = "Import JSON";
+importBtn.addEventListener("click", () => {
+  if (!view) return;
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = ".json,application/json";
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result as string);
+        const pmDoc = linesToDoc(data);
+        // Replace the entire ProseMirror doc via transaction
+        const tr = view.state.tr;
+        tr.replaceWith(0, view.state.doc.content.size, pmDoc.content);
+        view.dispatch(tr);
+        notyf.success("JSON imported");
+      } catch (err: any) {
+        notyf.error("Import failed: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  });
+  fileInput.click();
+});
+toolbar.appendChild(importBtn);
 
 document.querySelector("#app")!.appendChild(toolbar);
 

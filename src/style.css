@@ -210,6 +210,39 @@ h1 {
   border: 1px solid #c678dd44;
 }
 
+.trigger-badge {
+  position: absolute;
+  right: 0.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.65em;
+  font-weight: 600;
+  color: #e0a050;
+  border: 1px solid #e0a05044;
+  border-radius: 3px;
+  padding: 0 0.3em;
+  user-select: none;
+  text-transform: none;
+  pointer-events: none;
+}
+
+.line[data-trigger] {
+  position: relative;
+}
+
+.line[data-trigger]::after {
+  content: attr(data-trigger);
+  margin-left: 0.5em;
+  font-size: 0.75em;
+  font-weight: 700;
+  color: #e0a050;
+  border: 1px solid #e0a05044;
+  border-radius: 3px;
+  padding: 0 0.3em;
+  user-select: none;
+  pointer-events: none;
+}
+
 .choice.choice-dimmed {
   opacity: 0.3;
 }
@@ -242,6 +275,34 @@ h1 {
 .char-name-input::placeholder {
   color: #555;
   text-transform: none;
+}
+
+.name-autocomplete {
+  display: none;
+  pointer-events: auto;
+  z-index: 101;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.name-autocomplete-item {
+  padding: 0.3em 0.6em;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #aaa;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.name-autocomplete-item:hover,
+.name-autocomplete-item.selected {
+  background: #3a3a5a;
+  color: #ddd;
 }
 
 .json-editor-popup {
