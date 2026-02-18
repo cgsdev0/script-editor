@@ -3,7 +3,7 @@ import { WebSocketServer } from "ws";
 import * as Y from "yjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
 import { join, extname } from "path";
-import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie } from "./auth.mjs";
+import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie, getDocumentPermissions, grantDocumentAccess, revokeDocumentAccess, userCanEditDocument, findUserByUsername, getAllUsers } from "./auth.mjs";
 
 const PORT = parseInt(process.env.PORT || "1234", 10);
 const PERSIST_DIR = process.env.YPERSISTENCE || "./yjs-data";
@@ -12,7 +12,7 @@ const DIST_DIR = join(import.meta.dirname, "dist");
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_REDIRECT_URI = process.env.TWITCH_REDIRECT_URI || "http://localhost:1234/auth/twitch/callback";
-const ALLOWED_USERS = (process.env.ALLOWED_USERS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+const SUPERUSERS = (process.env.SUPERUSERS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
 const db = initDb(join(import.meta.dirname, "data", "auth.db"));
 
@@ -188,23 +188,31 @@ const server = createServer((req, res) => {
     }
     const { user } = session;
     json(res, 200, {
+      id: user.id,
       username: user.username,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
-      canEdit: ALLOWED_USERS.includes(user.username.toLowerCase()),
+      isSuperuser: SUPERUSERS.includes(user.username.toLowerCase()),
     });
     return;
   }
 
   if (req.method === "GET" && path === "/api/documents") {
     try {
+      const session = getSessionFromReq(req);
+      const isSuperuser = session ? SUPERUSERS.includes(session.user.username.toLowerCase()) : false;
+      const userId = session ? session.user.id : null;
+
       const files = readdirSync(PERSIST_DIR).filter((f) => f.endsWith(".yjs"));
       const docs = files.map((f) => {
+        const docId = f.replace(/\.yjs$/, "");
         const st = statSync(join(PERSIST_DIR, f));
+        const canEdit = isSuperuser || (userId ? userCanEditDocument(db, docId, userId) : false);
         return {
-          id: f.replace(/\.yjs$/, ""),
+          id: docId,
           lastModified: st.mtime.toISOString(),
           size: st.size,
+          canEdit,
         };
       });
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -213,6 +221,73 @@ const server = createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end("[]");
     }
+    return;
+  }
+
+  // --- Users list (superuser-gated) ---
+
+  if (req.method === "GET" && path === "/api/users") {
+    const session = getSessionFromReq(req);
+    if (!session) { json(res, 401, { error: "Not authenticated" }); return; }
+    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+    if (!isSuperuser) { json(res, 403, { error: "Superuser access required" }); return; }
+    json(res, 200, getAllUsers(db));
+    return;
+  }
+
+  // --- Per-document permission endpoints ---
+
+  const docPermMatch = path.match(/^\/api\/documents\/([^/]+)\/permissions(?:\/(\d+))?$/);
+
+  if (docPermMatch) {
+    const docId = decodeURIComponent(docPermMatch[1]);
+    const targetUserId = docPermMatch[2] ? parseInt(docPermMatch[2], 10) : null;
+
+    const session = getSessionFromReq(req);
+    if (!session) { json(res, 401, { error: "Not authenticated" }); return; }
+    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+    if (!isSuperuser) { json(res, 403, { error: "Superuser access required" }); return; }
+
+    if (req.method === "GET" && !targetUserId) {
+      const perms = getDocumentPermissions(db, docId);
+      json(res, 200, perms);
+      return;
+    }
+
+    if (req.method === "POST" && !targetUserId) {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const { username } = JSON.parse(body);
+          if (!username) { json(res, 400, { error: "username required" }); return; }
+          const targetUser = findUserByUsername(db, username);
+          if (!targetUser) { json(res, 404, { error: "User not found" }); return; }
+          grantDocumentAccess(db, docId, targetUser.id);
+          json(res, 200, { ok: true, userId: targetUser.id, username: targetUser.username });
+        } catch {
+          json(res, 400, { error: "Invalid JSON" });
+        }
+      });
+      return;
+    }
+
+    if (req.method === "DELETE" && targetUserId) {
+      revokeDocumentAccess(db, docId, targetUserId);
+      json(res, 200, { ok: true });
+      return;
+    }
+  }
+
+  // Any authenticated user can check their own edit access
+  const canEditMatch = path.match(/^\/api\/documents\/([^/]+)\/can-edit$/);
+  if (canEditMatch && req.method === "GET") {
+    const docId = decodeURIComponent(canEditMatch[1]);
+    const session = getSessionFromReq(req);
+    if (!session) { json(res, 200, { canEdit: false }); return; }
+    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+    const canEdit = isSuperuser || userCanEditDocument(db, docId, session.user.id);
+    json(res, 200, { canEdit });
     return;
   }
 
@@ -288,14 +363,15 @@ function encodeVarUint8Array(data) {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws, req) => {
+  const room = (req.url || "/").slice(1) || "default";
+
   // Auth: determine write access from session cookie
   const session = getSession(db, parseSessionCookie(req.headers.cookie));
+  const isSuperuser = session ? SUPERUSERS.includes(session.user.username.toLowerCase()) : false;
   const canEdit = session
-    ? ALLOWED_USERS.includes(session.user.username.toLowerCase())
+    ? (isSuperuser || userCanEditDocument(db, room, session.user.id))
     : false;
   ws._canEdit = canEdit;
-
-  const room = (req.url || "/").slice(1) || "default";
   const doc = getDoc(room);
   doc._clients.add(ws);
 

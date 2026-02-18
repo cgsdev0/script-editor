@@ -21,10 +21,11 @@ import { route, navigate, resolve, onCleanup } from "./router.ts";
 import { mountDocList } from "./doc-list.ts";
 
 export interface AuthUser {
+  id: number;
   username: string;
   displayName: string;
   avatarUrl: string;
-  canEdit: boolean;
+  isSuperuser: boolean;
 }
 
 export let currentUser: AuthUser | null = null;
@@ -1977,7 +1978,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
   });
   toolbar.appendChild(exportBtn);
 
-  if (canEdit) {
+  if (currentUser?.isSuperuser) {
     const importBtn = document.createElement("button");
     importBtn.className = "export-btn";
     importBtn.textContent = "Import JSON";
@@ -2342,9 +2343,31 @@ route("/", () => {
 });
 
 route("/d/:docId", (params) => {
-  const canEdit = currentUser?.canEdit ?? false;
-  const cleanup = mountEditor(appEl, params.docId, canEdit);
-  onCleanup(cleanup);
+  if (currentUser?.isSuperuser) {
+    const cleanup = mountEditor(appEl, params.docId, true);
+    onCleanup(cleanup);
+  } else {
+    // Show loading state while fetching permission
+    appEl.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.textContent = "Loading...";
+    loading.style.padding = "2rem";
+    loading.style.color = "#888";
+    appEl.appendChild(loading);
+
+    fetch(`/api/documents/${encodeURIComponent(params.docId)}/can-edit`)
+      .then((r) => r.json())
+      .then((data) => {
+        appEl.innerHTML = "";
+        const cleanup = mountEditor(appEl, params.docId, data.canEdit);
+        onCleanup(cleanup);
+      })
+      .catch(() => {
+        appEl.innerHTML = "";
+        const cleanup = mountEditor(appEl, params.docId, false);
+        onCleanup(cleanup);
+      });
+  }
 });
 
 // Fetch auth state before resolving routes

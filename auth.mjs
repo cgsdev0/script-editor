@@ -27,6 +27,14 @@ export function initDb(dbPath) {
       created_at TEXT DEFAULT (datetime('now')),
       expires_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS document_permissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(document_id, user_id)
+    );
   `);
 
   return db;
@@ -86,4 +94,34 @@ export function parseSessionCookie(cookieHeader) {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(/(?:^|;\s*)session=([^;]+)/);
   return match ? match[1] : null;
+}
+
+export function getDocumentPermissions(db, documentId) {
+  return db.prepare(`
+    SELECT dp.id, dp.document_id, dp.user_id, u.username, u.display_name, u.avatar_url
+    FROM document_permissions dp
+    JOIN users u ON u.id = dp.user_id
+    WHERE dp.document_id = ?
+  `).all(documentId);
+}
+
+export function grantDocumentAccess(db, documentId, userId) {
+  db.prepare("INSERT OR IGNORE INTO document_permissions (document_id, user_id) VALUES (?, ?)").run(documentId, userId);
+}
+
+export function revokeDocumentAccess(db, documentId, userId) {
+  db.prepare("DELETE FROM document_permissions WHERE document_id = ? AND user_id = ?").run(documentId, userId);
+}
+
+export function userCanEditDocument(db, documentId, userId) {
+  const row = db.prepare("SELECT 1 FROM document_permissions WHERE document_id = ? AND user_id = ?").get(documentId, userId);
+  return !!row;
+}
+
+export function findUserByUsername(db, username) {
+  return db.prepare("SELECT * FROM users WHERE LOWER(username) = LOWER(?)").get(username) || null;
+}
+
+export function getAllUsers(db) {
+  return db.prepare("SELECT id, username, display_name, avatar_url FROM users ORDER BY LOWER(username)").all();
 }
