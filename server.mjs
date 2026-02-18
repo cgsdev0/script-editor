@@ -1,8 +1,11 @@
-import { createServer } from "http";
+import { Hono } from "hono";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { WebSocketServer } from "ws";
 import * as Y from "yjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
-import { join, extname } from "path";
+import { join } from "path";
 import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie, getDocumentPermissions, grantDocumentAccess, revokeDocumentAccess, userCanEditDocument, findUserByUsername, getAllUsers } from "./auth.mjs";
 
 const PORT = parseInt(process.env.PORT || "1234", 10);
@@ -18,99 +21,39 @@ const db = initDb(join(import.meta.dirname, "data", "auth.db"));
 
 mkdirSync(PERSIST_DIR, { recursive: true });
 
-// --- Static file serving ---
+// --- Auth helper ---
 
-const MIME = {
-  ".html": "text/html",
-  ".js":   "application/javascript",
-  ".css":  "text/css",
-  ".svg":  "image/svg+xml",
-  ".png":  "image/png",
-  ".json": "application/json",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
-function serveStatic(req, res) {
-  let url = req.url.split("?")[0];
-  if (url === "/") url = "/index.html";
-  const filePath = join(DIST_DIR, url);
-
-  // Prevent path traversal
-  if (!filePath.startsWith(DIST_DIR)) {
-    res.writeHead(403);
-    res.end();
-    return;
-  }
-
-  try {
-    const data = readFileSync(filePath);
-    const ext = extname(filePath);
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
-    res.end(data);
-  } catch {
-    // SPA fallback — serve index.html for non-file routes
-    try {
-      const index = readFileSync(join(DIST_DIR, "index.html"));
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(index);
-    } catch {
-      res.writeHead(404);
-      res.end("Not found");
-    }
-  }
-}
-
-// --- Auth helpers ---
-
-function json(res, status, data) {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
-
-function redirect(res, url) {
-  res.writeHead(302, { Location: url });
-  res.end();
-}
-
-function getSessionFromReq(req) {
-  const sessionId = parseSessionCookie(req.headers.cookie);
+function getSessionFromReq(c) {
+  const sessionId = getCookie(c, "session");
   return getSession(db, sessionId);
 }
 
-// --- HTTP server ---
+// --- Hono app ---
 
-const server = createServer((req, res) => {
-  const urlObj = new URL(req.url, `http://${req.headers.host}`);
-  const path = urlObj.pathname;
+const app = new Hono();
 
-  // --- Auth routes ---
+// --- Auth routes ---
 
-  if (req.method === "GET" && path === "/auth/twitch") {
-    if (!TWITCH_CLIENT_ID) {
-      res.writeHead(500);
-      res.end("TWITCH_CLIENT_ID not configured");
-      return;
-    }
-    const params = new URLSearchParams({
-      client_id: TWITCH_CLIENT_ID,
-      redirect_uri: TWITCH_REDIRECT_URI,
-      response_type: "code",
-    });
-    redirect(res, `https://id.twitch.tv/oauth2/authorize?${params}`);
-    return;
+app.get("/auth/twitch", (c) => {
+  if (!TWITCH_CLIENT_ID) {
+    return c.text("TWITCH_CLIENT_ID not configured", 500);
+  }
+  const params = new URLSearchParams({
+    client_id: TWITCH_CLIENT_ID,
+    redirect_uri: TWITCH_REDIRECT_URI,
+    response_type: "code",
+  });
+  return c.redirect(`https://id.twitch.tv/oauth2/authorize?${params}`);
+});
+
+app.get("/auth/twitch/callback", async (c) => {
+  const code = c.req.query("code");
+  if (!code) {
+    return c.text("Missing code parameter", 400);
   }
 
-  if (req.method === "GET" && path === "/auth/twitch/callback") {
-    const code = urlObj.searchParams.get("code");
-    if (!code) {
-      res.writeHead(400);
-      res.end("Missing code parameter");
-      return;
-    }
-
-    // Exchange code for token
-    fetch("https://id.twitch.tv/oauth2/token", {
+  try {
+    const tokenRes = await fetch("https://id.twitch.tv/oauth2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -120,186 +63,190 @@ const server = createServer((req, res) => {
         grant_type: "authorization_code",
         redirect_uri: TWITCH_REDIRECT_URI,
       }),
-    })
-      .then(r => r.json())
-      .then(tokenData => {
-        if (!tokenData.access_token) {
-          res.writeHead(400);
-          res.end("Token exchange failed");
-          return;
-        }
-        // Fetch user info
-        return fetch("https://api.twitch.tv/helix/users", {
-          headers: {
-            Authorization: `Bearer ${tokenData.access_token}`,
-            "Client-Id": TWITCH_CLIENT_ID,
-          },
-        })
-          .then(r => r.json())
-          .then(userData => {
-            const twitchUser = userData.data?.[0];
-            if (!twitchUser) {
-              res.writeHead(400);
-              res.end("Failed to fetch Twitch user");
-              return;
-            }
-
-            const user = upsertUser(db, {
-              twitchId: twitchUser.id,
-              username: twitchUser.login,
-              displayName: twitchUser.display_name,
-              avatarUrl: twitchUser.profile_image_url,
-            });
-
-            const sessionId = createSession(db, user.id);
-            res.writeHead(302, {
-              Location: "/",
-              "Set-Cookie": `session=${sessionId}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
-            });
-            res.end();
-          });
-      })
-      .catch(err => {
-        console.error("Twitch auth error:", err);
-        res.writeHead(500);
-        res.end("Authentication failed");
-      });
-    return;
-  }
-
-  if (req.method === "GET" && path === "/auth/logout") {
-    const sessionId = parseSessionCookie(req.headers.cookie);
-    deleteSession(db, sessionId);
-    res.writeHead(302, {
-      Location: "/",
-      "Set-Cookie": "session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
     });
-    res.end();
-    return;
-  }
+    const tokenData = await tokenRes.json();
 
-  // --- API routes ---
-
-  if (req.method === "GET" && path === "/api/me") {
-    const session = getSessionFromReq(req);
-    if (!session) {
-      json(res, 200, null);
-      return;
+    if (!tokenData.access_token) {
+      return c.text("Token exchange failed", 400);
     }
-    const { user } = session;
-    json(res, 200, {
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
-      isSuperuser: SUPERUSERS.includes(user.username.toLowerCase()),
+
+    const userRes = await fetch("https://api.twitch.tv/helix/users", {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        "Client-Id": TWITCH_CLIENT_ID,
+      },
     });
-    return;
-  }
-
-  if (req.method === "GET" && path === "/api/documents") {
-    try {
-      const session = getSessionFromReq(req);
-      const isSuperuser = session ? SUPERUSERS.includes(session.user.username.toLowerCase()) : false;
-      const userId = session ? session.user.id : null;
-
-      const files = readdirSync(PERSIST_DIR).filter((f) => f.endsWith(".yjs"));
-      const docs = files.map((f) => {
-        const docId = f.replace(/\.yjs$/, "");
-        const st = statSync(join(PERSIST_DIR, f));
-        const canEdit = isSuperuser || (userId ? userCanEditDocument(db, docId, userId) : false);
-        return {
-          id: docId,
-          lastModified: st.mtime.toISOString(),
-          size: st.size,
-          canEdit,
-        };
-      });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(docs));
-    } catch {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end("[]");
-    }
-    return;
-  }
-
-  // --- Users list (superuser-gated) ---
-
-  if (req.method === "GET" && path === "/api/users") {
-    const session = getSessionFromReq(req);
-    if (!session) { json(res, 401, { error: "Not authenticated" }); return; }
-    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-    if (!isSuperuser) { json(res, 403, { error: "Superuser access required" }); return; }
-    json(res, 200, getAllUsers(db));
-    return;
-  }
-
-  // --- Per-document permission endpoints ---
-
-  const docPermMatch = path.match(/^\/api\/documents\/([^/]+)\/permissions(?:\/(\d+))?$/);
-
-  if (docPermMatch) {
-    const docId = decodeURIComponent(docPermMatch[1]);
-    const targetUserId = docPermMatch[2] ? parseInt(docPermMatch[2], 10) : null;
-
-    const session = getSessionFromReq(req);
-    if (!session) { json(res, 401, { error: "Not authenticated" }); return; }
-    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-    if (!isSuperuser) { json(res, 403, { error: "Superuser access required" }); return; }
-
-    if (req.method === "GET" && !targetUserId) {
-      const perms = getDocumentPermissions(db, docId);
-      json(res, 200, perms);
-      return;
+    const userData = await userRes.json();
+    const twitchUser = userData.data?.[0];
+    if (!twitchUser) {
+      return c.text("Failed to fetch Twitch user", 400);
     }
 
-    if (req.method === "POST" && !targetUserId) {
-      let body = "";
-      req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => {
-        try {
-          const { username } = JSON.parse(body);
-          if (!username) { json(res, 400, { error: "username required" }); return; }
-          const targetUser = findUserByUsername(db, username);
-          if (!targetUser) { json(res, 404, { error: "User not found" }); return; }
-          grantDocumentAccess(db, docId, targetUser.id);
-          json(res, 200, { ok: true, userId: targetUser.id, username: targetUser.username });
-        } catch {
-          json(res, 400, { error: "Invalid JSON" });
-        }
-      });
-      return;
-    }
+    const user = upsertUser(db, {
+      twitchId: twitchUser.id,
+      username: twitchUser.login,
+      displayName: twitchUser.display_name,
+      avatarUrl: twitchUser.profile_image_url,
+    });
 
-    if (req.method === "DELETE" && targetUserId) {
-      revokeDocumentAccess(db, docId, targetUserId);
-      json(res, 200, { ok: true });
-      return;
-    }
+    const sessionId = createSession(db, user.id);
+    setCookie(c, "session", sessionId, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60,
+    });
+    return c.redirect("/");
+  } catch (err) {
+    console.error("Twitch auth error:", err);
+    return c.text("Authentication failed", 500);
   }
+});
 
-  // Any authenticated user can check their own edit access
-  const canEditMatch = path.match(/^\/api\/documents\/([^/]+)\/can-edit$/);
-  if (canEditMatch && req.method === "GET") {
-    const docId = decodeURIComponent(canEditMatch[1]);
-    const session = getSessionFromReq(req);
-    if (!session) { json(res, 200, { canEdit: false }); return; }
-    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-    const canEdit = isSuperuser || userCanEditDocument(db, docId, session.user.id);
-    json(res, 200, { canEdit });
-    return;
+app.get("/auth/logout", (c) => {
+  const sessionId = getCookie(c, "session");
+  deleteSession(db, sessionId);
+  deleteCookie(c, "session", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/",
+  });
+  return c.redirect("/");
+});
+
+// --- API routes ---
+
+app.get("/api/me", (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) {
+    return c.json(null);
   }
+  const { user } = session;
+  return c.json({
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    isSuperuser: SUPERUSERS.includes(user.username.toLowerCase()),
+  });
+});
 
-  serveStatic(req, res);
+app.get("/api/documents", (c) => {
+  try {
+    const session = getSessionFromReq(c);
+    const isSuperuser = session ? SUPERUSERS.includes(session.user.username.toLowerCase()) : false;
+    const userId = session ? session.user.id : null;
+
+    const files = readdirSync(PERSIST_DIR).filter((f) => f.endsWith(".yjs"));
+    const docs = files.map((f) => {
+      const docId = f.replace(/\.yjs$/, "");
+      const st = statSync(join(PERSIST_DIR, f));
+      const canEdit = isSuperuser || (userId ? userCanEditDocument(db, docId, userId) : false);
+      return {
+        id: docId,
+        lastModified: st.mtime.toISOString(),
+        size: st.size,
+        canEdit,
+      };
+    });
+    return c.json(docs);
+  } catch {
+    return c.json([]);
+  }
+});
+
+// --- Users list (superuser-gated) ---
+
+app.get("/api/users", (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
+  return c.json(getAllUsers(db));
+});
+
+// --- Per-document permission endpoints ---
+
+app.get("/api/documents/:docId/permissions", (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
+
+  const docId = c.req.param("docId");
+  const perms = getDocumentPermissions(db, docId);
+  return c.json(perms);
+});
+
+app.post("/api/documents/:docId/permissions", async (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
+
+  const docId = c.req.param("docId");
+  try {
+    const { username } = await c.req.json();
+    if (!username) return c.json({ error: "username required" }, 400);
+    const targetUser = findUserByUsername(db, username);
+    if (!targetUser) return c.json({ error: "User not found" }, 404);
+    grantDocumentAccess(db, docId, targetUser.id);
+    return c.json({ ok: true, userId: targetUser.id, username: targetUser.username });
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+});
+
+app.delete("/api/documents/:docId/permissions/:userId", (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
+
+  const docId = c.req.param("docId");
+  const userId = parseInt(c.req.param("userId"), 10);
+  revokeDocumentAccess(db, docId, userId);
+  return c.json({ ok: true });
+});
+
+// --- Can-edit check ---
+
+app.get("/api/documents/:docId/can-edit", (c) => {
+  const docId = c.req.param("docId");
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ canEdit: false });
+  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+  const canEdit = isSuperuser || userCanEditDocument(db, docId, session.user.id);
+  return c.json({ canEdit });
+});
+
+// --- Static files + SPA fallback ---
+
+app.use("*", serveStatic({ root: "./dist" }));
+
+app.get("*", (c) => {
+  try {
+    const html = readFileSync(join(DIST_DIR, "index.html"), "utf-8");
+    return c.html(html);
+  } catch {
+    return c.text("Not found", 404);
+  }
+});
+
+// --- Start server ---
+
+const server = serve({ fetch: app.fetch, port: PORT }, () => {
+  console.log(`Server running on port ${PORT}`);
 });
 
 // --- Yjs document persistence ---
 
-const docs = new Map();
+const yjsDocs = new Map();
 
 function getDoc(room) {
-  if (docs.has(room)) return docs.get(room);
+  if (yjsDocs.has(room)) return yjsDocs.get(room);
 
   const doc = new Y.Doc();
   const filepath = join(PERSIST_DIR, `${room}.yjs`);
@@ -310,7 +257,7 @@ function getDoc(room) {
 
   doc._filepath = filepath;
   doc._clients = new Set();
-  docs.set(room, doc);
+  yjsDocs.set(room, doc);
   return doc;
 }
 
@@ -429,8 +376,4 @@ wss.on("connection", (ws, req) => {
   const sv = Y.encodeStateVector(doc);
   const step1 = [MSG_SYNC, SYNC_STEP1, ...encodeVarUint8Array(sv)];
   ws.send(new Uint8Array(step1));
-});
-
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
