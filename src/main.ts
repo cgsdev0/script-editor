@@ -307,7 +307,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     if (selectedArrowGroup) selectedArrowGroup = null;
 
     const ns = "http://www.w3.org/2000/svg";
-    const margin = 240;
+    const margin = parseFloat(getComputedStyle(root).paddingLeft) || 0;
     const r = 6;
 
     function makeSvg(side: "left" | "right"): SVGSVGElement {
@@ -532,7 +532,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       cols: number[],
       side: "left" | "right",
     ) {
-      const xInner = 228;
+      const xInner = margin - 12;
       const xOuter = 8;
       const maxCol = Math.max(...cols, 0);
       const xStep = maxCol > 0 ? Math.min(12, (xInner - xOuter) / maxCol) : 0;
@@ -545,12 +545,12 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
         if (side === "left") {
           d = [
-            `M 236 ${choiceY}`,
+            `M ${margin - 4} ${choiceY}`,
             `H ${x + r}`,
             `A ${r} ${r} 0 0 0 ${x} ${choiceY + r}`,
             `V ${targetY - r}`,
             `A ${r} ${r} 0 0 0 ${x + r} ${targetY}`,
-            `H 236`,
+            `H ${margin - 4}`,
           ].join(" ");
         } else {
           const sx = a.startX ?? 4;
@@ -2206,6 +2206,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     wrapper.appendChild(overlay);
 
     requestAnimationFrame(() => refresh(view));
+    addGlobalListener(window, "resize", () => scheduleRefresh(view));
     if (canEdit) {
       setupArrowInteraction(view);
       setupDragDrop(view);

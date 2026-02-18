@@ -76,8 +76,9 @@ h1 {
 .ProseMirror {
   outline: none;
   position: relative;
-  padding-left: 240px;
-  padding-right: 240px;
+  /* Arrow gutters shrink first to protect content width (min ~500px content) */
+  padding-left: clamp(0px, calc(50% - 250px), 240px);
+  padding-right: clamp(0px, calc(50% - 250px), 240px);
   padding-bottom: 60vh;
 }
 
