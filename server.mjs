@@ -4,9 +4,9 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { WebSocketServer } from "ws";
 import * as Y from "yjs";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
-import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie, getDocumentPermissions, grantDocumentAccess, revokeDocumentAccess, userCanEditDocument, findUserByUsername, getAllUsers } from "./auth.mjs";
+import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie, getDocumentPermissions, grantDocumentAccess, revokeDocumentAccess, userCanEditDocument, findUserByUsername, getAllUsers, setDocumentOwner, isDocumentOwner, deleteDocumentData } from "./auth.mjs";
 
 const PORT = parseInt(process.env.PORT || "1234", 10);
 const PERSIST_DIR = process.env.YPERSISTENCE || "./yjs-data";
@@ -15,7 +15,6 @@ const DIST_DIR = join(import.meta.dirname, "dist");
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 const TWITCH_REDIRECT_URI = process.env.TWITCH_REDIRECT_URI || "http://localhost:1234/auth/twitch/callback";
-const SUPERUSERS = (process.env.SUPERUSERS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
 const db = initDb(join(import.meta.dirname, "data", "auth.db"));
 
@@ -129,26 +128,41 @@ app.get("/api/me", (c) => {
     username: user.username,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
-    isSuperuser: SUPERUSERS.includes(user.username.toLowerCase()),
   });
+});
+
+app.post("/api/documents", async (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  try {
+    const { id } = await c.req.json();
+    if (!id || typeof id !== "string") return c.json({ error: "id required" }, 400);
+    const filepath = join(PERSIST_DIR, `${id}.yjs`);
+    if (existsSync(filepath)) return c.json({ error: "Document already exists" }, 409);
+    setDocumentOwner(db, id, session.user.id);
+    return c.json({ ok: true, id });
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
 });
 
 app.get("/api/documents", (c) => {
   try {
     const session = getSessionFromReq(c);
-    const isSuperuser = session ? SUPERUSERS.includes(session.user.username.toLowerCase()) : false;
     const userId = session ? session.user.id : null;
 
     const files = readdirSync(PERSIST_DIR).filter((f) => f.endsWith(".yjs"));
     const docs = files.map((f) => {
       const docId = f.replace(/\.yjs$/, "");
       const st = statSync(join(PERSIST_DIR, f));
-      const canEdit = isSuperuser || (userId ? userCanEditDocument(db, docId, userId) : false);
+      const owner = userId ? isDocumentOwner(db, docId, userId) : false;
+      const canEdit = owner || (userId ? userCanEditDocument(db, docId, userId) : false);
       return {
         id: docId,
         lastModified: st.mtime.toISOString(),
         size: st.size,
         canEdit,
+        isOwner: owner,
       };
     });
     return c.json(docs);
@@ -157,13 +171,36 @@ app.get("/api/documents", (c) => {
   }
 });
 
-// --- Users list (superuser-gated) ---
+app.delete("/api/documents/:docId", (c) => {
+  const session = getSessionFromReq(c);
+  if (!session) return c.json({ error: "Not authenticated" }, 401);
+  const docId = c.req.param("docId");
+  if (!isDocumentOwner(db, docId, session.user.id)) return c.json({ error: "Owner access required" }, 403);
+
+  // Remove .yjs file
+  const filepath = join(PERSIST_DIR, `${docId}.yjs`);
+  if (existsSync(filepath)) unlinkSync(filepath);
+
+  // Evict from in-memory cache and disconnect clients
+  const cached = yjsDocs.get(docId);
+  if (cached) {
+    for (const client of cached._clients) {
+      client.close();
+    }
+    yjsDocs.delete(docId);
+  }
+
+  // Clean up DB records
+  deleteDocumentData(db, docId);
+
+  return c.json({ ok: true });
+});
+
+// --- Users list (any authenticated user, for autocomplete) ---
 
 app.get("/api/users", (c) => {
   const session = getSessionFromReq(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
-  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
   return c.json(getAllUsers(db));
 });
 
@@ -172,10 +209,9 @@ app.get("/api/users", (c) => {
 app.get("/api/documents/:docId/permissions", (c) => {
   const session = getSessionFromReq(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
-  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
-
   const docId = c.req.param("docId");
+  if (!isDocumentOwner(db, docId, session.user.id)) return c.json({ error: "Owner access required" }, 403);
+
   const perms = getDocumentPermissions(db, docId);
   return c.json(perms);
 });
@@ -183,10 +219,8 @@ app.get("/api/documents/:docId/permissions", (c) => {
 app.post("/api/documents/:docId/permissions", async (c) => {
   const session = getSessionFromReq(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
-  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
-
   const docId = c.req.param("docId");
+  if (!isDocumentOwner(db, docId, session.user.id)) return c.json({ error: "Owner access required" }, 403);
   try {
     const { username } = await c.req.json();
     if (!username) return c.json({ error: "username required" }, 400);
@@ -202,10 +236,8 @@ app.post("/api/documents/:docId/permissions", async (c) => {
 app.delete("/api/documents/:docId/permissions/:userId", (c) => {
   const session = getSessionFromReq(c);
   if (!session) return c.json({ error: "Not authenticated" }, 401);
-  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-  if (!isSuperuser) return c.json({ error: "Superuser access required" }, 403);
-
   const docId = c.req.param("docId");
+  if (!isDocumentOwner(db, docId, session.user.id)) return c.json({ error: "Owner access required" }, 403);
   const userId = parseInt(c.req.param("userId"), 10);
   revokeDocumentAccess(db, docId, userId);
   return c.json({ ok: true });
@@ -216,10 +248,10 @@ app.delete("/api/documents/:docId/permissions/:userId", (c) => {
 app.get("/api/documents/:docId/can-edit", (c) => {
   const docId = c.req.param("docId");
   const session = getSessionFromReq(c);
-  if (!session) return c.json({ canEdit: false });
-  const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
-  const canEdit = isSuperuser || userCanEditDocument(db, docId, session.user.id);
-  return c.json({ canEdit });
+  if (!session) return c.json({ canEdit: false, isOwner: false });
+  const owner = isDocumentOwner(db, docId, session.user.id);
+  const canEdit = owner || userCanEditDocument(db, docId, session.user.id);
+  return c.json({ canEdit, isOwner: owner });
 });
 
 // --- Static files + SPA fallback ---
@@ -314,9 +346,8 @@ wss.on("connection", (ws, req) => {
 
   // Auth: determine write access from session cookie
   const session = getSession(db, parseSessionCookie(req.headers.cookie));
-  const isSuperuser = session ? SUPERUSERS.includes(session.user.username.toLowerCase()) : false;
   const canEdit = session
-    ? (isSuperuser || userCanEditDocument(db, room, session.user.id))
+    ? (isDocumentOwner(db, room, session.user.id) || userCanEditDocument(db, room, session.user.id))
     : false;
   ws._canEdit = canEdit;
   const doc = getDoc(room);

@@ -36,6 +36,12 @@ export function initDb(dbPath) {
       UNIQUE(document_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS document_owners (
+      document_id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS document_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       document_id TEXT NOT NULL,
@@ -167,6 +173,35 @@ export function getDocumentVersion(db, versionId) {
     LEFT JOIN users u ON u.id = dv.user_id
     WHERE dv.id = ?
   `).get(versionId);
+}
+
+export function setDocumentOwner(db, documentId, userId) {
+  db.prepare("INSERT OR IGNORE INTO document_owners (document_id, user_id) VALUES (?, ?)").run(documentId, userId);
+}
+
+export function getDocumentOwner(db, documentId) {
+  return db.prepare(`
+    SELECT u.id, u.twitch_id, u.username, u.display_name, u.avatar_url
+    FROM document_owners do_
+    JOIN users u ON u.id = do_.user_id
+    WHERE do_.document_id = ?
+  `).get(documentId) || null;
+}
+
+export function isDocumentOwner(db, documentId, userId) {
+  const row = db.prepare("SELECT 1 FROM document_owners WHERE document_id = ? AND user_id = ?").get(documentId, userId);
+  return !!row;
+}
+
+export function getOwnedDocumentIds(db, userId) {
+  const rows = db.prepare("SELECT document_id FROM document_owners WHERE user_id = ?").all(userId);
+  return new Set(rows.map(r => r.document_id));
+}
+
+export function deleteDocumentData(db, documentId) {
+  db.prepare("DELETE FROM document_permissions WHERE document_id = ?").run(documentId);
+  db.prepare("DELETE FROM document_versions WHERE document_id = ?").run(documentId);
+  db.prepare("DELETE FROM document_owners WHERE document_id = ?").run(documentId);
 }
 
 export function deleteOldAutoVersions(db, documentId, keepCount = 200) {

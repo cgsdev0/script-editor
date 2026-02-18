@@ -6,6 +6,7 @@ interface DocInfo {
   lastModified: string;
   size: number;
   canEdit?: boolean;
+  isOwner?: boolean;
 }
 
 interface PermUser {
@@ -56,17 +57,34 @@ export function mountDocList(appEl: HTMLElement, user: AuthUser | null): () => v
   header.className = "doc-list-header";
   container.appendChild(header);
 
-  const newBtn = document.createElement("button");
-  newBtn.className = "doc-list-new-btn";
-  newBtn.textContent = "+ New Document";
-  newBtn.addEventListener("click", () => {
-    const name = prompt("Document name:");
-    if (!name) return;
-    const id = name.trim().replace(/\s+/g, "-").toLowerCase();
-    if (!id) return;
-    navigate(`/d/${id}`);
-  });
-  container.appendChild(newBtn);
+  if (user) {
+    const newBtn = document.createElement("button");
+    newBtn.className = "doc-list-new-btn";
+    newBtn.textContent = "+ New Document";
+    newBtn.addEventListener("click", async () => {
+      const name = prompt("Document name:");
+      if (!name) return;
+      const id = name.trim().replace(/\s+/g, "-").toLowerCase();
+      if (!id) return;
+      try {
+        const res = await fetch("/api/documents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+      } catch {
+        alert("Failed to create document");
+        return;
+      }
+      navigate(`/d/${id}`);
+    });
+    container.appendChild(newBtn);
+  }
 
   const list = document.createElement("div");
   list.className = "doc-list-items";
@@ -74,8 +92,6 @@ export function mountDocList(appEl: HTMLElement, user: AuthUser | null): () => v
   container.appendChild(list);
 
   appEl.appendChild(container);
-
-  const isSuperuser = user?.isSuperuser ?? false;
 
   let activeModal: HTMLElement | null = null;
   let activeDropdown: HTMLElement | null = null;
@@ -386,7 +402,7 @@ export function mountDocList(appEl: HTMLElement, user: AuthUser | null): () => v
 
         row.appendChild(item);
 
-        if (isSuperuser) {
+        if (doc.isOwner) {
           const gearBtn = document.createElement("button");
           gearBtn.className = "doc-perm-btn";
           gearBtn.textContent = "\u2699";
@@ -399,6 +415,29 @@ export function mountDocList(appEl: HTMLElement, user: AuthUser | null): () => v
           });
 
           row.appendChild(gearBtn);
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "doc-perm-btn doc-delete-btn";
+          deleteBtn.textContent = "\u2715";
+          deleteBtn.title = "Delete document";
+
+          deleteBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            if (!confirm(`Delete "${doc.id}"? This cannot be undone.`)) return;
+            fetch(`/api/documents/${encodeURIComponent(doc.id)}`, { method: "DELETE" })
+              .then((r) => r.json())
+              .then((data) => {
+                if (data.error) {
+                  alert(data.error);
+                  return;
+                }
+                row.remove();
+              })
+              .catch(() => alert("Failed to delete document"));
+          });
+
+          row.appendChild(deleteBtn);
         }
 
         list.appendChild(row);

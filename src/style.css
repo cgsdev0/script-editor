@@ -586,6 +586,11 @@ button:focus-visible {
   color: #ccc;
 }
 
+.doc-delete-btn:hover {
+  border-color: #e85050;
+  color: #e85050;
+}
+
 .doc-perm-backdrop {
   position: fixed;
   inset: 0;
