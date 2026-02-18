@@ -3,7 +3,7 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  color-scheme: dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #242424;
 
@@ -68,7 +68,6 @@ h1 {
 }
 
 .export-btn {
-  margin-left: auto;
   padding: 0.4em 0.8em;
   font-size: 0.85em;
 }
@@ -427,15 +426,128 @@ button:focus-visible {
   text-transform: none;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+/* Document list */
+.doc-list {
+  max-width: 600px;
+  margin: 0 auto;
 }
+
+.doc-list-header {
+  font-size: 1.5em;
+  margin-bottom: 1rem;
+}
+
+.doc-list-new-btn {
+  margin-bottom: 1.5rem;
+  padding: 0.5em 1em;
+  font-size: 0.9em;
+  background: #2a2a4a;
+  color: #aac;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.doc-list-new-btn:hover {
+  border-color: #646cff;
+  color: #dde;
+}
+
+.doc-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.doc-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #1a1a2a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s;
+}
+
+.doc-list-item:hover {
+  border-color: #646cff;
+}
+
+.doc-list-item-name {
+  font-weight: 600;
+  color: #ccc;
+}
+
+.doc-list-item-meta {
+  font-size: 0.8em;
+  color: #666;
+}
+
+/* Toolbar additions for editor */
+.toolbar-back {
+  font-size: 0.85em;
+  color: #888;
+  text-decoration: none;
+  margin-right: 0.5rem;
+}
+
+.toolbar-back:hover {
+  color: #aaa;
+}
+
+.toolbar-doc-name {
+  font-weight: 600;
+  color: #ccc;
+  margin-right: auto;
+}
+
+/* Auth UI */
+.toolbar-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.toolbar-user {
+  font-size: 0.85em;
+  color: #ccc;
+  margin-left: 0.3rem;
+}
+
+.toolbar-logout {
+  font-size: 0.8em;
+  color: #888;
+  text-decoration: none;
+  margin-left: 0.5rem;
+}
+
+.toolbar-logout:hover {
+  color: #e85d75;
+}
+
+.toolbar-login {
+  font-size: 0.85em;
+  color: #9b6bff;
+  text-decoration: none;
+  padding: 0.3em 0.7em;
+  border: 1px solid #9b6bff44;
+  border-radius: 4px;
+}
+
+.toolbar-login:hover {
+  color: #b88aff;
+  border-color: #9b6bff88;
+}
+
+.doc-list-auth {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+

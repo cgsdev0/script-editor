@@ -1,12 +1,20 @@
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import * as Y from "yjs";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
 import { join, extname } from "path";
+import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie } from "./auth.mjs";
 
 const PORT = parseInt(process.env.PORT || "1234", 10);
 const PERSIST_DIR = process.env.YPERSISTENCE || "./yjs-data";
 const DIST_DIR = join(import.meta.dirname, "dist");
+
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
+const TWITCH_REDIRECT_URI = process.env.TWITCH_REDIRECT_URI || "http://localhost:1234/auth/twitch/callback";
+const ALLOWED_USERS = (process.env.ALLOWED_USERS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+
+const db = initDb(join(import.meta.dirname, "data", "auth.db"));
 
 mkdirSync(PERSIST_DIR, { recursive: true });
 
@@ -53,7 +61,163 @@ function serveStatic(req, res) {
   }
 }
 
-const server = createServer(serveStatic);
+// --- Auth helpers ---
+
+function json(res, status, data) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
+function redirect(res, url) {
+  res.writeHead(302, { Location: url });
+  res.end();
+}
+
+function getSessionFromReq(req) {
+  const sessionId = parseSessionCookie(req.headers.cookie);
+  return getSession(db, sessionId);
+}
+
+// --- HTTP server ---
+
+const server = createServer((req, res) => {
+  const urlObj = new URL(req.url, `http://${req.headers.host}`);
+  const path = urlObj.pathname;
+
+  // --- Auth routes ---
+
+  if (req.method === "GET" && path === "/auth/twitch") {
+    if (!TWITCH_CLIENT_ID) {
+      res.writeHead(500);
+      res.end("TWITCH_CLIENT_ID not configured");
+      return;
+    }
+    const params = new URLSearchParams({
+      client_id: TWITCH_CLIENT_ID,
+      redirect_uri: TWITCH_REDIRECT_URI,
+      response_type: "code",
+    });
+    redirect(res, `https://id.twitch.tv/oauth2/authorize?${params}`);
+    return;
+  }
+
+  if (req.method === "GET" && path === "/auth/twitch/callback") {
+    const code = urlObj.searchParams.get("code");
+    if (!code) {
+      res.writeHead(400);
+      res.end("Missing code parameter");
+      return;
+    }
+
+    // Exchange code for token
+    fetch("https://id.twitch.tv/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: TWITCH_CLIENT_ID,
+        client_secret: TWITCH_CLIENT_SECRET,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: TWITCH_REDIRECT_URI,
+      }),
+    })
+      .then(r => r.json())
+      .then(tokenData => {
+        if (!tokenData.access_token) {
+          res.writeHead(400);
+          res.end("Token exchange failed");
+          return;
+        }
+        // Fetch user info
+        return fetch("https://api.twitch.tv/helix/users", {
+          headers: {
+            Authorization: `Bearer ${tokenData.access_token}`,
+            "Client-Id": TWITCH_CLIENT_ID,
+          },
+        })
+          .then(r => r.json())
+          .then(userData => {
+            const twitchUser = userData.data?.[0];
+            if (!twitchUser) {
+              res.writeHead(400);
+              res.end("Failed to fetch Twitch user");
+              return;
+            }
+
+            const user = upsertUser(db, {
+              twitchId: twitchUser.id,
+              username: twitchUser.login,
+              displayName: twitchUser.display_name,
+              avatarUrl: twitchUser.profile_image_url,
+            });
+
+            const sessionId = createSession(db, user.id);
+            res.writeHead(302, {
+              Location: "/",
+              "Set-Cookie": `session=${sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
+            });
+            res.end();
+          });
+      })
+      .catch(err => {
+        console.error("Twitch auth error:", err);
+        res.writeHead(500);
+        res.end("Authentication failed");
+      });
+    return;
+  }
+
+  if (req.method === "GET" && path === "/auth/logout") {
+    const sessionId = parseSessionCookie(req.headers.cookie);
+    deleteSession(db, sessionId);
+    res.writeHead(302, {
+      Location: "/",
+      "Set-Cookie": "session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+    });
+    res.end();
+    return;
+  }
+
+  // --- API routes ---
+
+  if (req.method === "GET" && path === "/api/me") {
+    const session = getSessionFromReq(req);
+    if (!session) {
+      json(res, 200, null);
+      return;
+    }
+    const { user } = session;
+    json(res, 200, {
+      username: user.username,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+      canEdit: ALLOWED_USERS.includes(user.username.toLowerCase()),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && path === "/api/documents") {
+    try {
+      const files = readdirSync(PERSIST_DIR).filter((f) => f.endsWith(".yjs"));
+      const docs = files.map((f) => {
+        const st = statSync(join(PERSIST_DIR, f));
+        return {
+          id: f.replace(/\.yjs$/, ""),
+          lastModified: st.mtime.toISOString(),
+          size: st.size,
+        };
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(docs));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("[]");
+    }
+    return;
+  }
+
+  serveStatic(req, res);
+});
 
 // --- Yjs document persistence ---
 
@@ -124,6 +288,13 @@ function encodeVarUint8Array(data) {
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws, req) => {
+  // Auth: determine write access from session cookie
+  const session = getSession(db, parseSessionCookie(req.headers.cookie));
+  const canEdit = session
+    ? ALLOWED_USERS.includes(session.user.username.toLowerCase())
+    : false;
+  ws._canEdit = canEdit;
+
   const room = (req.url || "/").slice(1) || "default";
   const doc = getDoc(room);
   doc._clients.add(ws);
@@ -147,6 +318,9 @@ wss.on("connection", (ws, req) => {
         const step1 = [MSG_SYNC, SYNC_STEP1, ...encodeVarUint8Array(ourSv)];
         ws.send(new Uint8Array(step1));
       } else if (syncType === SYNC_STEP2 || syncType === SYNC_UPDATE) {
+        // Gate writes: only allow if canEdit
+        if (!ws._canEdit) return;
+
         const { value: update } = readVarUint8Array(data, 2);
         Y.applyUpdate(doc, update);
         persistDoc(doc);
