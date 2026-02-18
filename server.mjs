@@ -1,21 +1,68 @@
+import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import * as Y from "yjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
-import { join } from "path";
+import { join, extname } from "path";
 
 const PORT = parseInt(process.env.PORT || "1234", 10);
 const PERSIST_DIR = process.env.YPERSISTENCE || "./yjs-data";
+const DIST_DIR = join(import.meta.dirname, "dist");
 
 mkdirSync(PERSIST_DIR, { recursive: true });
 
-// One Y.Doc per room
+// --- Static file serving ---
+
+const MIME = {
+  ".html": "text/html",
+  ".js":   "application/javascript",
+  ".css":  "text/css",
+  ".svg":  "image/svg+xml",
+  ".png":  "image/png",
+  ".json": "application/json",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+function serveStatic(req, res) {
+  let url = req.url.split("?")[0];
+  if (url === "/") url = "/index.html";
+  const filePath = join(DIST_DIR, url);
+
+  // Prevent path traversal
+  if (!filePath.startsWith(DIST_DIR)) {
+    res.writeHead(403);
+    res.end();
+    return;
+  }
+
+  try {
+    const data = readFileSync(filePath);
+    const ext = extname(filePath);
+    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+    res.end(data);
+  } catch {
+    // SPA fallback — serve index.html for non-file routes
+    try {
+      const index = readFileSync(join(DIST_DIR, "index.html"));
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(index);
+    } catch {
+      res.writeHead(404);
+      res.end("Not found");
+    }
+  }
+}
+
+const server = createServer(serveStatic);
+
+// --- Yjs document persistence ---
+
 const docs = new Map();
 
 function getDoc(room) {
   if (docs.has(room)) return docs.get(room);
 
   const doc = new Y.Doc();
-  // Load persisted state if available
   const filepath = join(PERSIST_DIR, `${room}.yjs`);
   if (existsSync(filepath)) {
     const data = readFileSync(filepath);
@@ -33,7 +80,8 @@ function persistDoc(doc) {
   writeFileSync(doc._filepath, state);
 }
 
-// Yjs sync protocol constants
+// --- Yjs sync protocol ---
+
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
 const SYNC_STEP1 = 0;
@@ -71,11 +119,9 @@ function encodeVarUint8Array(data) {
   return [...writeVarUint(data.length), ...data];
 }
 
-const wss = new WebSocketServer({ port: PORT });
-console.log(`Yjs WebSocket server running on port ${PORT}`);
+// --- WebSocket server (attached to HTTP server) ---
 
-// Awareness state: clientID -> { clock, state }
-const awarenessStates = new Map();
+const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws, req) => {
   const room = (req.url || "/").slice(1) || "default";
@@ -92,23 +138,19 @@ wss.on("connection", (ws, req) => {
       const syncType = data[1];
 
       if (syncType === SYNC_STEP1) {
-        // Client sends its state vector, we reply with SYNC_STEP2 (missing updates)
         const { value: sv } = readVarUint8Array(data, 2);
         const update = Y.encodeStateAsUpdate(doc, sv);
         const encoded = [MSG_SYNC, SYNC_STEP2, ...encodeVarUint8Array(update)];
         ws.send(new Uint8Array(encoded));
 
-        // Also send our state vector as SYNC_STEP1 so client sends us what we're missing
         const ourSv = Y.encodeStateVector(doc);
         const step1 = [MSG_SYNC, SYNC_STEP1, ...encodeVarUint8Array(ourSv)];
         ws.send(new Uint8Array(step1));
       } else if (syncType === SYNC_STEP2 || syncType === SYNC_UPDATE) {
-        // Client sends update data
         const { value: update } = readVarUint8Array(data, 2);
         Y.applyUpdate(doc, update);
         persistDoc(doc);
 
-        // Broadcast to all other clients
         const broadcastMsg = syncType === SYNC_STEP2
           ? new Uint8Array([MSG_SYNC, SYNC_UPDATE, ...encodeVarUint8Array(update)])
           : data;
@@ -119,7 +161,6 @@ wss.on("connection", (ws, req) => {
         }
       }
     } else if (msgType === MSG_AWARENESS) {
-      // Broadcast awareness to all other clients
       for (const client of doc._clients) {
         if (client !== ws && client.readyState === 1) {
           client.send(data);
@@ -135,8 +176,11 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  // Send initial sync step 1 (our state vector) so client responds with its data
   const sv = Y.encodeStateVector(doc);
   const step1 = [MSG_SYNC, SYNC_STEP1, ...encodeVarUint8Array(sv)];
   ws.send(new Uint8Array(step1));
+});
+
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

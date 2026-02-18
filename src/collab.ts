@@ -10,8 +10,13 @@ const userColors = [
 const randomColor = userColors[Math.floor(Math.random() * userColors.length)];
 const userName = `User ${Math.floor(Math.random() * 1000)}`;
 
+const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+const wsUrl = import.meta.env.DEV
+  ? "ws://localhost:1234"
+  : `${wsProto}//${location.host}`;
+
 export const ydoc = new Y.Doc();
-export const provider = new WebsocketProvider("ws://localhost:1234", "script-editor", ydoc);
+export const provider = new WebsocketProvider(wsUrl, "script-editor", ydoc);
 export const yXmlFragment = ydoc.getXmlFragment("prosemirror");
 
 provider.awareness.setLocalStateField("user", {

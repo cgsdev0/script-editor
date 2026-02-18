@@ -201,7 +201,7 @@ function selectArrow(group: SVGGElement | null) {
   if (selectedArrowGroup) {
     const vis = selectedArrowGroup.querySelector(".arrow-visible");
     if (vis) {
-      const origStroke = vis.getAttribute("marker-end")?.includes("seq") ? "#555" : "#666";
+      const origStroke = (vis as SVGElement).dataset.origStroke ?? (vis.getAttribute("marker-end")?.includes("seq") ? "#555" : "#666");
       vis.setAttribute("stroke", origStroke);
       // restore original marker
       const markerEnd = vis.getAttribute("marker-end") ?? "";
@@ -265,6 +265,18 @@ function drawArrows(view: EditorView) {
     markerSel.setAttribute("id", `arrowhead-${side}-selected`);
     markerSel.querySelector("path")!.setAttribute("fill", "#e8e857");
     defs.appendChild(markerSel);
+
+    // choice (player input) marker
+    const markerChoice = marker.cloneNode(true) as SVGMarkerElement;
+    markerChoice.setAttribute("id", `arrowhead-${side}-choice`);
+    markerChoice.querySelector("path")!.setAttribute("fill", "#4a8a9e");
+    defs.appendChild(markerChoice);
+
+    // choice selected marker
+    const markerChoiceSel = marker.cloneNode(true) as SVGMarkerElement;
+    markerChoiceSel.setAttribute("id", `arrowhead-${side}-choice-selected`);
+    markerChoiceSel.querySelector("path")!.setAttribute("fill", "#e8e857");
+    defs.appendChild(markerChoiceSel);
 
     svg.appendChild(defs);
     return svg;
@@ -379,13 +391,36 @@ function drawArrows(view: EditorView) {
   });
 
   function assignColumns(arrows: ArrowInfo[]): number[] {
-    const indexed = arrows.map((a, i) => ({ span: a.span, idx: i }));
-    indexed.sort((a, b) => a.span - b.span);
-    const cols: number[] = new Array(arrows.length);
-    indexed.forEach((a, col) => {
-      cols[a.idx] = col;
-    });
-    return cols;
+    const n = arrows.length;
+    if (n === 0) return [];
+
+    const intervals = arrows.map((a, i) => ({
+      idx: i,
+      top: Math.min(a.choiceY, a.targetY),
+      bottom: Math.max(a.choiceY, a.targetY),
+      span: a.span,
+    }));
+
+    intervals.sort((a, b) => a.top - b.top || b.span - a.span);
+
+    const columnBottoms: number[] = [];
+    const localCols = new Array(n).fill(0);
+
+    for (const iv of intervals) {
+      let col = -1;
+      for (let c = 0; c < columnBottoms.length; c++) {
+        if (columnBottoms[c] <= iv.top) { col = c; break; }
+      }
+      if (col === -1) {
+        col = columnBottoms.length;
+        columnBottoms.push(0);
+      }
+      columnBottoms[col] = iv.bottom;
+      localCols[iv.idx] = col;
+    }
+
+    const maxCol = Math.max(...localCols, 0);
+    return localCols.map((c) => maxCol - c);
   }
 
   function makeArrowGroup(
@@ -411,9 +446,12 @@ function drawArrows(view: EditorView) {
     visPath.classList.add("arrow-visible");
     visPath.setAttribute("d", d);
     visPath.setAttribute("fill", "none");
-    visPath.setAttribute("stroke", "#666");
+    const isChoice = sourceEl.classList.contains("choice");
+    const strokeColor = isChoice ? "#4a8a9e" : "#666";
+    visPath.setAttribute("stroke", strokeColor);
+    visPath.dataset.origStroke = strokeColor;
     visPath.setAttribute("stroke-width", "1.5");
-    visPath.setAttribute("marker-end", `url(#arrowhead-${side})`);
+    visPath.setAttribute("marker-end", `url(#arrowhead-${side}${isChoice ? "-choice" : ""})`);
     visPath.style.pointerEvents = "none";
     g.appendChild(visPath);
 
@@ -430,7 +468,7 @@ function drawArrows(view: EditorView) {
     const xInner = 228;
     const xOuter = 8;
     const maxCol = Math.max(...cols, 0);
-    const xStep = maxCol > 0 ? (xInner - xOuter) / maxCol : 0;
+    const xStep = maxCol > 0 ? Math.min(12, (xInner - xOuter) / maxCol) : 0;
 
     arrows.forEach((a, i) => {
       const col = cols[i];
