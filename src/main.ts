@@ -22,7 +22,7 @@ import { Notyf } from "notyf";
 import "notyf/notyf.min.css";
 import { route, navigate, resolve, onCleanup } from "./router.ts";
 import { mountDocList } from "./doc-list.ts";
-import { openVersionHistory } from "./version-history.ts";
+
 
 export interface AuthUser {
   id: number;
@@ -2289,17 +2289,6 @@ export function mountEditor(
       fileInput.click();
     });
     toolbar.appendChild(importBtn);
-  }
-
-  if (currentUser) {
-    const historyBtn = document.createElement("button");
-    historyBtn.className = "export-btn";
-    historyBtn.textContent = "History";
-    historyBtn.addEventListener("click", () => {
-      if (!view) return;
-      openVersionHistory(docId, view, notyf, canEdit);
-    });
-    toolbar.appendChild(historyBtn);
   }
 
   // Auth UI in toolbar
