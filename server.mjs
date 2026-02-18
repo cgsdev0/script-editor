@@ -3,7 +3,8 @@ import { WebSocketServer } from "ws";
 import * as Y from "yjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "fs";
 import { join, extname } from "path";
-import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie, getDocumentPermissions, grantDocumentAccess, revokeDocumentAccess, userCanEditDocument, findUserByUsername, getAllUsers } from "./auth.mjs";
+import { yDocToProsemirrorJSON } from "y-prosemirror";
+import { initDb, upsertUser, createSession, getSession, deleteSession, parseSessionCookie, getDocumentPermissions, grantDocumentAccess, revokeDocumentAccess, userCanEditDocument, findUserByUsername, getAllUsers, createDocumentVersion, listDocumentVersions, getDocumentVersion, deleteOldAutoVersions } from "./auth.mjs";
 
 const PORT = parseInt(process.env.PORT || "1234", 10);
 const PERSIST_DIR = process.env.YPERSISTENCE || "./yjs-data";
@@ -17,6 +18,42 @@ const SUPERUSERS = (process.env.SUPERUSERS || "").split(",").map(s => s.trim().t
 const db = initDb(join(import.meta.dirname, "data", "auth.db"));
 
 mkdirSync(PERSIST_DIR, { recursive: true });
+
+// --- Snapshot engine ---
+
+const snapshotTimers = new Map();
+const lastEditors = new Map();
+
+function scheduleSnapshot(room, userId) {
+  lastEditors.set(room, userId);
+  if (snapshotTimers.has(room)) clearTimeout(snapshotTimers.get(room));
+  snapshotTimers.set(room, setTimeout(() => {
+    snapshotTimers.delete(room);
+    takeSnapshot(room);
+  }, 30000));
+}
+
+function takeSnapshot(room) {
+  const doc = docs.get(room);
+  if (!doc) return;
+  try {
+    const jsonContent = yDocToProsemirrorJSON(doc, "prosemirror");
+    const content = JSON.stringify(jsonContent);
+    const userId = lastEditors.get(room) ?? null;
+    createDocumentVersion(db, room, userId, content);
+    deleteOldAutoVersions(db, room);
+  } catch (err) {
+    console.error(`Snapshot failed for ${room}:`, err);
+  }
+}
+
+function flushSnapshot(room) {
+  if (snapshotTimers.has(room)) {
+    clearTimeout(snapshotTimers.get(room));
+    snapshotTimers.delete(room);
+    takeSnapshot(room);
+  }
+}
 
 // --- Static file serving ---
 
@@ -291,6 +328,80 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // --- Version history endpoints ---
+
+  const versionMatch = path.match(/^\/api\/documents\/([^/]+)\/versions(?:\/(\d+))?(?:\/(restore))?$/);
+  if (versionMatch) {
+    const docId = decodeURIComponent(versionMatch[1]);
+    const versionId = versionMatch[2] ? parseInt(versionMatch[2], 10) : null;
+    const isRestore = versionMatch[3] === "restore";
+
+    const session = getSessionFromReq(req);
+    if (!session) { json(res, 401, { error: "Not authenticated" }); return; }
+    const isSuperuser = SUPERUSERS.includes(session.user.username.toLowerCase());
+
+    // GET /api/documents/:docId/versions — list versions
+    if (req.method === "GET" && !versionId) {
+      const limit = parseInt(urlObj.searchParams.get("limit") || "50", 10);
+      const offset = parseInt(urlObj.searchParams.get("offset") || "0", 10);
+      const versions = listDocumentVersions(db, docId, limit, offset);
+      json(res, 200, versions);
+      return;
+    }
+
+    // GET /api/documents/:docId/versions/:id — get single version
+    if (req.method === "GET" && versionId && !isRestore) {
+      const version = getDocumentVersion(db, versionId);
+      if (!version || version.document_id !== docId) { json(res, 404, { error: "Version not found" }); return; }
+      json(res, 200, version);
+      return;
+    }
+
+    // POST /api/documents/:docId/versions — create named snapshot
+    if (req.method === "POST" && !versionId && !isRestore) {
+      const canEdit = isSuperuser || userCanEditDocument(db, docId, session.user.id);
+      if (!canEdit) { json(res, 403, { error: "No edit access" }); return; }
+
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const { label } = JSON.parse(body || "{}");
+          const doc = docs.get(docId);
+          if (!doc) { json(res, 404, { error: "Document not loaded" }); return; }
+          const jsonContent = yDocToProsemirrorJSON(doc, "prosemirror");
+          const content = JSON.stringify(jsonContent);
+          const id = createDocumentVersion(db, docId, session.user.id, content, label || null, false);
+          json(res, 200, { id, label });
+        } catch (err) {
+          json(res, 400, { error: "Invalid request" });
+        }
+      });
+      return;
+    }
+
+    // POST /api/documents/:docId/versions/:id/restore — restore a version
+    if (req.method === "POST" && versionId && isRestore) {
+      const canEdit = isSuperuser || userCanEditDocument(db, docId, session.user.id);
+      if (!canEdit) { json(res, 403, { error: "No edit access" }); return; }
+
+      const version = getDocumentVersion(db, versionId);
+      if (!version || version.document_id !== docId) { json(res, 404, { error: "Version not found" }); return; }
+
+      // Save current state as pre-restore snapshot
+      const doc = docs.get(docId);
+      if (doc) {
+        try {
+          const currentJson = yDocToProsemirrorJSON(doc, "prosemirror");
+          createDocumentVersion(db, docId, session.user.id, JSON.stringify(currentJson), "Auto-save before restore", true);
+        } catch {}
+      }
+
+      json(res, 200, { content: JSON.parse(version.content) });
+      return;
+    }
+  }
+
   serveStatic(req, res);
 });
 
@@ -372,6 +483,7 @@ wss.on("connection", (ws, req) => {
     ? (isSuperuser || userCanEditDocument(db, room, session.user.id))
     : false;
   ws._canEdit = canEdit;
+  ws._userId = session ? session.user.id : null;
   const doc = getDoc(room);
   doc._clients.add(ws);
 
@@ -400,6 +512,7 @@ wss.on("connection", (ws, req) => {
         const { value: update } = readVarUint8Array(data, 2);
         Y.applyUpdate(doc, update);
         persistDoc(doc);
+        scheduleSnapshot(room, ws._userId);
 
         const broadcastMsg = syncType === SYNC_STEP2
           ? new Uint8Array([MSG_SYNC, SYNC_UPDATE, ...encodeVarUint8Array(update)])
@@ -422,6 +535,7 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => {
     doc._clients.delete(ws);
     if (doc._clients.size === 0) {
+      flushSnapshot(room);
       persistDoc(doc);
     }
   });

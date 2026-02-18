@@ -6,7 +6,10 @@ import { EditorView } from "prosemirror-view";
 import { baseKeymap } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
 import { lines } from "./schema.ts";
-import { EditorView as CMEditorView, keymap as cmKeymap } from "@codemirror/view";
+import {
+  EditorView as CMEditorView,
+  keymap as cmKeymap,
+} from "@codemirror/view";
 import { EditorState as CMEditorState } from "@codemirror/state";
 import { json as jsonLang } from "@codemirror/lang-json";
 import { basicSetup } from "codemirror";
@@ -19,6 +22,7 @@ import { Notyf } from "notyf";
 import "notyf/notyf.min.css";
 import { route, navigate, resolve, onCleanup } from "./router.ts";
 import { mountDocList } from "./doc-list.ts";
+import { openVersionHistory } from "./version-history.ts";
 
 export interface AuthUser {
   id: number;
@@ -30,7 +34,11 @@ export interface AuthUser {
 
 export let currentUser: AuthUser | null = null;
 
-const notyf = new Notyf({ duration: 6000, position: { x: "right", y: "bottom" }, ripple: false });
+const notyf = new Notyf({
+  duration: 6000,
+  position: { x: "right", y: "bottom" },
+  ripple: false,
+});
 
 export const scriptSchema = new Schema({
   nodes: {
@@ -41,7 +49,11 @@ export const scriptSchema = new Schema({
       attrs: { id: { default: "" } },
       content: "dialogue | decision",
       toDOM(node): DOMOutputSpec {
-        return ["section", { class: "entry", "data-entry-id": node.attrs.id }, 0];
+        return [
+          "section",
+          { class: "entry", "data-entry-id": node.attrs.id },
+          0,
+        ];
       },
     },
     dialogue: {
@@ -58,12 +70,23 @@ export const scriptSchema = new Schema({
       toDOM(node): DOMOutputSpec {
         const attrs: Record<string, string> = { class: "dialogue" };
         if (node.attrs.next) attrs["data-next"] = node.attrs.next;
-        const charNameChildren: DOMOutputSpec[] = [["span", { class: "char-name-link" }, node.attrs.char]];
-        if (node.attrs.trigger) charNameChildren.push(["span", { class: "trigger-badge", contenteditable: "false" }, node.attrs.trigger]);
+        const charNameChildren: DOMOutputSpec[] = [
+          ["span", { class: "char-name-link" }, node.attrs.char],
+        ];
+        if (node.attrs.trigger)
+          charNameChildren.push([
+            "span",
+            { class: "trigger-badge", contenteditable: "false" },
+            node.attrs.trigger,
+          ]);
         return [
           "div",
           attrs,
-          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, ...charNameChildren],
+          [
+            "div",
+            { class: "char-name", contenteditable: "false", draggable: "true" },
+            ...charNameChildren,
+          ],
           ["div", { class: "dialogue-lines" }, 0],
         ];
       },
@@ -94,7 +117,11 @@ export const scriptSchema = new Schema({
         return [
           "div",
           { class: "decision" },
-          ["div", { class: "char-name", contenteditable: "false", draggable: "true" }, ["span", { class: "char-name-link" }, "PLAYER"]],
+          [
+            "div",
+            { class: "char-name", contenteditable: "false", draggable: "true" },
+            ["span", { class: "char-name-link" }, "PLAYER"],
+          ],
           ["div", { class: "decision-choices" }, 0],
         ];
       },
@@ -113,13 +140,41 @@ export const scriptSchema = new Schema({
         if (node.attrs.next) attrs["data-next"] = node.attrs.next;
         if (node.attrs.checked) attrs["data-checked"] = "true";
         const indicators: DOMOutputSpec[] = [];
-        if (node.attrs.cond) indicators.push(["span", { class: "choice-badge choice-badge-cond", contenteditable: "false" }, "?"]);
-        if (node.attrs.effect) indicators.push(["span", { class: "choice-badge choice-badge-effect", contenteditable: "false" }, "!"]);
+        if (node.attrs.cond)
+          indicators.push([
+            "span",
+            {
+              class: "choice-badge choice-badge-cond",
+              contenteditable: "false",
+            },
+            "?",
+          ]);
+        if (node.attrs.effect)
+          indicators.push([
+            "span",
+            {
+              class: "choice-badge choice-badge-effect",
+              contenteditable: "false",
+            },
+            "!",
+          ]);
         return [
           "div",
           attrs,
-          ["span", { class: "choice-checkbox", contenteditable: "false" }, node.attrs.checked ? "\u2611" : "\u2610"],
-          ["span", { class: "drag-handle", contenteditable: "false", draggable: "true" }, "\u2847"],
+          [
+            "span",
+            { class: "choice-checkbox", contenteditable: "false" },
+            node.attrs.checked ? "\u2611" : "\u2610",
+          ],
+          [
+            "span",
+            {
+              class: "drag-handle",
+              contenteditable: "false",
+              draggable: "true",
+            },
+            "\u2847",
+          ],
           ["span", { class: "choice-text" }, 0],
           ...indicators,
         ];
@@ -141,7 +196,13 @@ function linesToDoc(data: typeof lines): PMNode {
     if ("input" in node) {
       const { input: rawInput, ...decisionExtra } = node as any;
       const choices = rawInput.map((choice: any) => {
-        const { text: ct, next: cn, effect: ce, cond: cc, ...choiceExtra } = choice;
+        const {
+          text: ct,
+          next: cn,
+          effect: ce,
+          cond: cc,
+          ...choiceExtra
+        } = choice;
         return s.nodes.choice.create(
           {
             next: cn ?? null,
@@ -157,7 +218,16 @@ function linesToDoc(data: typeof lines): PMNode {
         choices,
       );
     } else {
-      const { char, text: rawText, delay, next, trigger, unskippable, randomize, ...dialogueExtra } = node as any;
+      const {
+        char,
+        text: rawText,
+        delay,
+        next,
+        trigger,
+        unskippable,
+        randomize,
+        ...dialogueExtra
+      } = node as any;
       const textArray = Array.isArray(rawText) ? rawText : [rawText];
       const lineNodes = textArray.map((l: any) => {
         if (typeof l === "string") {
@@ -251,24 +321,42 @@ function selectBlock(state: EditorState, dispatch?: (tr: any) => void) {
   if (dispatch) {
     const start = $from.start(depth);
     const end = $from.end(depth);
-    dispatch(state.tr.setSelection(TextSelection.create(state.doc, start, end)));
+    dispatch(
+      state.tr.setSelection(TextSelection.create(state.doc, start, end)),
+    );
   }
   return true;
 }
 
 // --- mountEditor ---
 
-export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): () => void {
+export function mountEditor(
+  appEl: HTMLElement,
+  docId: string,
+  canEdit = true,
+): () => void {
   appEl.innerHTML = "";
 
-  const collab = createCollab(docId, currentUser ? { name: currentUser.displayName, username: currentUser.username } : undefined);
+  const collab = createCollab(
+    docId,
+    currentUser
+      ? { name: currentUser.displayName, username: currentUser.username }
+      : undefined,
+  );
 
   // overlay container for SVGs — sits outside ProseMirror's managed DOM
   let overlay: HTMLElement;
   let customDragActive = false;
 
-  let charNameMousedown: { x: number; y: number; target: HTMLElement } | null = null;
-  let activeJsonEditor: { popup: HTMLElement; cmView: CMEditorView; save: () => void; cleanup: () => void; entryId: string } | null = null;
+  let charNameMousedown: { x: number; y: number; target: HTMLElement } | null =
+    null;
+  let activeJsonEditor: {
+    popup: HTMLElement;
+    cmView: CMEditorView;
+    save: () => void;
+    cleanup: () => void;
+    entryId: string;
+  } | null = null;
 
   // maps SVG group elements to the source DOM element that owns the `next` attr
   let arrowSourceMap = new Map<Element, HTMLElement>();
@@ -279,7 +367,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     if (selectedArrowGroup) {
       const vis = selectedArrowGroup.querySelector(".arrow-visible");
       if (vis) {
-        const origStroke = (vis as SVGElement).dataset.origStroke ?? (vis.getAttribute("marker-end")?.includes("seq") ? "#555" : "#666");
+        const origStroke =
+          (vis as SVGElement).dataset.origStroke ??
+          (vis.getAttribute("marker-end")?.includes("seq") ? "#555" : "#666");
         vis.setAttribute("stroke", origStroke);
         const markerEnd = vis.getAttribute("marker-end") ?? "";
         vis.setAttribute("marker-end", markerEnd.replace("-selected", ""));
@@ -385,7 +475,11 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
     const choices = root.querySelectorAll<HTMLElement>(".choice[data-next]");
     choices.forEach((choiceEl) => {
-      if (choiceEl.closest(".entry-hidden") || choiceEl.classList.contains("choice-dimmed")) return;
+      if (
+        choiceEl.closest(".entry-hidden") ||
+        choiceEl.classList.contains("choice-dimmed")
+      )
+        return;
       const nextId = choiceEl.dataset.next!;
       const targetEl = root.querySelector<HTMLElement>(
         `.entry[data-entry-id="${nextId}"]`,
@@ -393,9 +487,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       if (!targetEl || targetEl.classList.contains("entry-hidden")) return;
 
       const choiceY =
-        choiceEl.getBoundingClientRect().top - rootTop + choiceEl.offsetHeight / 2;
-      const targetY =
-        targetEl.getBoundingClientRect().top - rootTop + 8;
+        choiceEl.getBoundingClientRect().top -
+        rootTop +
+        choiceEl.offsetHeight / 2;
+      const targetY = targetEl.getBoundingClientRect().top - rootTop + 8;
 
       const info: ArrowInfo = {
         choiceY,
@@ -411,17 +506,28 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       }
     });
 
-    type SeqArrow = { fromY: number; toY: number; x: number; sourceEl: HTMLElement };
+    type SeqArrow = {
+      fromY: number;
+      toY: number;
+      x: number;
+      sourceEl: HTMLElement;
+    };
     const seqArrows: SeqArrow[] = [];
 
-    const dialogues = root.querySelectorAll<HTMLElement>(".dialogue[data-next]");
+    const dialogues = root.querySelectorAll<HTMLElement>(
+      ".dialogue[data-next]",
+    );
     dialogues.forEach((dialogueEl) => {
       const entry = dialogueEl.closest(".entry") as HTMLElement;
       if (!entry || entry.classList.contains("entry-hidden")) return;
       const nextId = dialogueEl.dataset.next!;
 
       let nextEntry = entry.nextElementSibling;
-      while (nextEntry && (!nextEntry.matches(".entry") || (nextEntry as HTMLElement).classList.contains("entry-hidden")))
+      while (
+        nextEntry &&
+        (!nextEntry.matches(".entry") ||
+          (nextEntry as HTMLElement).classList.contains("entry-hidden"))
+      )
         nextEntry = nextEntry.nextElementSibling;
 
       if (nextEntry && (nextEntry as HTMLElement).dataset.entryId === nextId) {
@@ -442,9 +548,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       const charName = dialogueEl.querySelector<HTMLElement>(".char-name");
       const sourceEl = charName ?? dialogueEl;
       const sourceY =
-        sourceEl.getBoundingClientRect().top - rootTop + sourceEl.offsetHeight / 2;
-      const targetY =
-        targetEl.getBoundingClientRect().top - rootTop + 8;
+        sourceEl.getBoundingClientRect().top -
+        rootTop +
+        sourceEl.offsetHeight / 2;
+      const targetY = targetEl.getBoundingClientRect().top - rootTop + 8;
 
       const info: ArrowInfo = {
         choiceY: sourceY,
@@ -479,7 +586,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       for (const iv of intervals) {
         let col = -1;
         for (let c = 0; c < columnBottoms.length; c++) {
-          if (columnBottoms[c] <= iv.top) { col = c; break; }
+          if (columnBottoms[c] <= iv.top) {
+            col = c;
+            break;
+          }
         }
         if (col === -1) {
           col = columnBottoms.length;
@@ -519,7 +629,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       visPath.setAttribute("stroke", strokeColor);
       visPath.dataset.origStroke = strokeColor;
       visPath.setAttribute("stroke-width", "1.5");
-      visPath.setAttribute("marker-end", `url(#arrowhead-${side}${isChoice ? "-choice" : ""})`);
+      visPath.setAttribute(
+        "marker-end",
+        `url(#arrowhead-${side}${isChoice ? "-choice" : ""})`,
+      );
       visPath.style.pointerEvents = "none";
       g.appendChild(visPath);
 
@@ -678,16 +791,25 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       const rootRect = root.getBoundingClientRect();
 
       exits.forEach((el) => {
-        if (el.closest(".entry-hidden") || el.closest(".entry")?.classList.contains("entry-hidden")) return;
+        if (
+          el.closest(".entry-hidden") ||
+          el.closest(".entry")?.classList.contains("entry-hidden")
+        )
+          return;
         if (el.classList.contains("choice-dimmed")) return;
         let measureEl: HTMLElement = el;
         if (el.classList.contains("dialogue")) {
           measureEl = el.querySelector(".char-name") ?? el;
         }
         const y =
-          measureEl.getBoundingClientRect().top - rootTop + measureEl.offsetHeight / 2;
+          measureEl.getBoundingClientRect().top -
+          rootTop +
+          measureEl.offsetHeight / 2;
 
-        const walker = document.createTreeWalker(measureEl, NodeFilter.SHOW_TEXT);
+        const walker = document.createTreeWalker(
+          measureEl,
+          NodeFilter.SHOW_TEXT,
+        );
         let lastText: Text | null = null;
         while (walker.nextNode()) lastText = walker.currentNode as Text;
         let sx: number;
@@ -735,9 +857,19 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
   }
 
   // Track global listeners for cleanup
-  const globalListeners: { target: EventTarget; type: string; handler: EventListener; capture?: boolean }[] = [];
+  const globalListeners: {
+    target: EventTarget;
+    type: string;
+    handler: EventListener;
+    capture?: boolean;
+  }[] = [];
 
-  function addGlobalListener(target: EventTarget, type: string, handler: EventListener, capture?: boolean) {
+  function addGlobalListener(
+    target: EventTarget,
+    type: string,
+    handler: EventListener,
+    capture?: boolean,
+  ) {
     target.addEventListener(type, handler, capture);
     globalListeners.push({ target, type, handler, capture });
   }
@@ -880,7 +1012,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         const targetId = hoveredEntry.dataset.entryId;
 
         if (targetId && dragSourceEl) {
-          const sourceEntry = dragSourceEl.closest(".entry") as HTMLElement | null;
+          const sourceEntry = dragSourceEl.closest(
+            ".entry",
+          ) as HTMLElement | null;
           const sourceId = sourceEntry?.dataset.entryId;
           if (targetId !== sourceId) {
             const pos = view.posAtDOM(dragSourceEl, 0);
@@ -953,12 +1087,14 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         n === dragSource || !n.matches(selector) || isHidden(n);
       const nextVisible = (el: Element): Element | null => {
         let n = el.nextElementSibling;
-        while (n && (!n.matches(selector) || isHidden(n))) n = n.nextElementSibling;
+        while (n && (!n.matches(selector) || isHidden(n)))
+          n = n.nextElementSibling;
         return n;
       };
       const prevVisible = (el: Element): Element | null => {
         let n = el.previousElementSibling;
-        while (n && (!n.matches(selector) || isHidden(n))) n = n.previousElementSibling;
+        while (n && (!n.matches(selector) || isHidden(n)))
+          n = n.previousElementSibling;
         return n;
       };
 
@@ -966,16 +1102,18 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
       if (el && isHidden(el)) el = null as any;
 
-      if (el && dragType === "choice" && el.parentElement !== dragSource!.parentElement) {
+      if (
+        el &&
+        dragType === "choice" &&
+        el.parentElement !== dragSource!.parentElement
+      ) {
         clearIndicators();
         return;
       }
 
       if (!el) {
         const container =
-          dragType === "choice"
-            ? dragSource!.parentElement!
-            : dom;
+          dragType === "choice" ? dragSource!.parentElement! : dom;
         const all = [
           ...container.querySelectorAll<HTMLElement>(`:scope > ${selector}`),
         ].filter((n) => n !== dragSource && !isHidden(n));
@@ -994,17 +1132,18 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       e.dataTransfer!.dropEffect = "move";
 
       obs?.stop?.();
-      dom.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((ind) =>
-        ind.classList.remove("drag-over-top", "drag-over-bottom"),
-      );
+      dom
+        .querySelectorAll(".drag-over-top, .drag-over-bottom")
+        .forEach((ind) =>
+          ind.classList.remove("drag-over-top", "drag-over-bottom"),
+        );
 
       const rect = el.getBoundingClientRect();
       const inBottomHalf = e.clientY > rect.top + rect.height / 2;
 
       if (el === dragSource ? inBottomHalf : inBottomHalf) {
         let next = el.nextElementSibling;
-        while (next && skipSibling(next))
-          next = next.nextElementSibling;
+        while (next && skipSibling(next)) next = next.nextElementSibling;
         if (next) {
           indicatorEl = next as HTMLElement;
           insertAfterIndicator = false;
@@ -1016,16 +1155,14 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         }
       } else if (el === dragSource) {
         let prev = el.previousElementSibling;
-        while (prev && skipSibling(prev))
-          prev = prev.previousElementSibling;
+        while (prev && skipSibling(prev)) prev = prev.previousElementSibling;
         if (prev) {
           indicatorEl = prev as HTMLElement;
           insertAfterIndicator = true;
           indicatorEl.classList.add("drag-over-bottom");
         } else {
           let next = el.nextElementSibling;
-          while (next && skipSibling(next))
-            next = next.nextElementSibling;
+          while (next && skipSibling(next)) next = next.nextElementSibling;
           if (next) {
             indicatorEl = next as HTMLElement;
             insertAfterIndicator = false;
@@ -1041,7 +1178,8 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       if (indicatorEl) {
         const isNoOp = insertAfterIndicator
           ? nextVisible(indicatorEl) === dragSource
-          : prevVisible(indicatorEl) === dragSource || indicatorEl === nextVisible(dragSource!);
+          : prevVisible(indicatorEl) === dragSource ||
+            indicatorEl === nextVisible(dragSource!);
         if (isNoOp) {
           indicatorEl.classList.remove("drag-over-top", "drag-over-bottom");
           indicatorEl = null;
@@ -1065,7 +1203,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
       const nodeType = dragType === "choice" ? "decision" : "doc";
       let parentDepth = $source.depth;
-      while (parentDepth > 0 && $source.node(parentDepth).type.name !== nodeType) {
+      while (
+        parentDepth > 0 &&
+        $source.node(parentDepth).type.name !== nodeType
+      ) {
         parentDepth--;
       }
       if (dragType === "choice" && parentDepth === 0) {
@@ -1124,11 +1265,15 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
       const obs = (view as any).domObserver;
       obs?.stop?.();
-      dom.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((ind) =>
-        ind.classList.remove("drag-over-top", "drag-over-bottom"),
-      );
+      dom
+        .querySelectorAll(".drag-over-top, .drag-over-bottom")
+        .forEach((ind) =>
+          ind.classList.remove("drag-over-top", "drag-over-bottom"),
+        );
 
-      const first = dom.querySelector<HTMLElement>(".entry:not(.entry-hidden):not(.dragging)");
+      const first = dom.querySelector<HTMLElement>(
+        ".entry:not(.entry-hidden):not(.dragging)",
+      );
       if (first && first !== dragSource) {
         indicatorEl = first;
         insertAfterIndicator = false;
@@ -1152,9 +1297,11 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
     function clearIndicators() {
       obs?.stop?.();
-      dom.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((el) =>
-        el.classList.remove("drag-over-top", "drag-over-bottom"),
-      );
+      dom
+        .querySelectorAll(".drag-over-top, .drag-over-bottom")
+        .forEach((el) =>
+          el.classList.remove("drag-over-top", "drag-over-bottom"),
+        );
       indicatorEl = null;
       obs?.start?.();
     }
@@ -1179,14 +1326,20 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       allNextTargets.add(el.dataset.next!);
     });
     const ids: string[] = [];
-    root.querySelectorAll<HTMLElement>(".entry[data-entry-id]").forEach((entry) => {
-      const id = entry.dataset.entryId!;
-      if (!allNextTargets.has(id)) ids.push(id);
-    });
+    root
+      .querySelectorAll<HTMLElement>(".entry[data-entry-id]")
+      .forEach((entry) => {
+        const id = entry.dataset.entryId!;
+        if (!allNextTargets.has(id)) ids.push(id);
+      });
     return ids;
   }
 
-  function walkGraph(root: HTMLElement, startIds: string[], respectChecks = true): Set<string> {
+  function walkGraph(
+    root: HTMLElement,
+    startIds: string[],
+    respectChecks = true,
+  ): Set<string> {
     const reachable = new Set<string>();
 
     function walk(entryId: string) {
@@ -1232,7 +1385,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     const hasAnyChecks =
       root.querySelector<HTMLElement>(".choice[data-checked]") !== null;
 
-    entries.forEach((e) => e.classList.remove("entry-hidden", "entry-detached"));
+    entries.forEach((e) =>
+      e.classList.remove("entry-hidden", "entry-detached"),
+    );
     root
       .querySelectorAll(".choice")
       .forEach((e) => e.classList.remove("choice-dimmed"));
@@ -1242,21 +1397,25 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         const checked = decision.querySelectorAll(".choice[data-checked]");
         if (checked.length > 0) {
           decision.querySelectorAll(".choice").forEach((choice) => {
-            if (!choice.hasAttribute("data-checked")) choice.classList.add("choice-dimmed");
+            if (!choice.hasAttribute("data-checked"))
+              choice.classList.add("choice-dimmed");
           });
         }
       });
     }
 
-    const rootIds = filterEntrypoint ? [filterEntrypoint] : getEntrypoints(root);
+    const rootIds = filterEntrypoint
+      ? [filterEntrypoint]
+      : getEntrypoints(root);
 
     if (!hasAnyChecks && !filterEntrypoint) return;
 
     const reachable = walkGraph(root, rootIds);
 
-    const fullSubgraph = filterEntrypoint && hasAnyChecks
-      ? walkGraph(root, rootIds, false)
-      : reachable;
+    const fullSubgraph =
+      filterEntrypoint && hasAnyChecks
+        ? walkGraph(root, rootIds, false)
+        : reachable;
 
     if (filterEntrypoint) {
       for (const id of fullSubgraph) pinnedEntries.add(id);
@@ -1282,16 +1441,18 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       allNextTargets.add(el.dataset.next!);
     });
 
-    root.querySelectorAll<HTMLElement>(".entry[data-entry-id]").forEach((entry) => {
-      const id = entry.dataset.entryId!;
-      if (allNextTargets.has(id)) return;
-      const charName = entry.querySelector(".char-name");
-      if (!charName) return;
-      const label = document.createElement("span");
-      label.className = "entrypoint-label";
-      label.textContent = id;
-      charName.insertBefore(label, charName.firstChild);
-    });
+    root
+      .querySelectorAll<HTMLElement>(".entry[data-entry-id]")
+      .forEach((entry) => {
+        const id = entry.dataset.entryId!;
+        if (allNextTargets.has(id)) return;
+        const charName = entry.querySelector(".char-name");
+        if (!charName) return;
+        const label = document.createElement("span");
+        label.className = "entrypoint-label";
+        label.textContent = id;
+        charName.insertBefore(label, charName.firstChild);
+      });
   }
 
   function updateFilterDropdown(root: HTMLElement) {
@@ -1324,7 +1485,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
   let activeNameInput: HTMLInputElement | null = null;
 
-  function findEntryPosByID(doc: PMNode, id: string): { pos: number; node: PMNode } | null {
+  function findEntryPosByID(
+    doc: PMNode,
+    id: string,
+  ): { pos: number; node: PMNode } | null {
     let result: { pos: number; node: PMNode } | null = null;
     doc.forEach((child, off) => {
       if (!result && child.type.name === "entry" && child.attrs.id === id) {
@@ -1349,7 +1513,12 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     view.dispatch(tr);
   }
 
-  function finalizeDialogue(view: EditorView, id: string, charName: string, sourceEntryId?: string) {
+  function finalizeDialogue(
+    view: EditorView,
+    id: string,
+    charName: string,
+    sourceEntryId?: string,
+  ) {
     const found = findEntryPosByID(view.state.doc, id);
     if (!found) return;
     const dialoguePos = found.pos + 1;
@@ -1358,7 +1527,11 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       { ...dialogueNode.attrs, char: charName },
       dialogueNode.content,
     );
-    let tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, newDialogue);
+    let tr = view.state.tr.replaceWith(
+      dialoguePos,
+      dialoguePos + dialogueNode.nodeSize,
+      newDialogue,
+    );
 
     if (sourceEntryId) {
       const sourceFound = findEntryPosByID(tr.doc, sourceEntryId);
@@ -1366,7 +1539,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         const sourceInner = sourceFound.node.firstChild!;
         if (sourceInner.type.name === "dialogue") {
           const sourceDialoguePos = sourceFound.pos + 1;
-          tr = tr.setNodeMarkup(sourceDialoguePos, null, { ...sourceInner.attrs, next: id });
+          tr = tr.setNodeMarkup(sourceDialoguePos, null, {
+            ...sourceInner.attrs,
+            next: id,
+          });
         }
       }
     }
@@ -1377,14 +1553,20 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       const lineEl = entryEl?.querySelector(".line");
       if (lineEl) {
         const pos = view.posAtDOM(lineEl, 0);
-        const tr2 = view.state.tr.setSelection(TextSelection.create(view.state.doc, pos));
+        const tr2 = view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, pos),
+        );
         view.dispatch(tr2);
         view.focus();
       }
     });
   }
 
-  function convertToDecision(view: EditorView, id: string, sourceEntryId?: string) {
+  function convertToDecision(
+    view: EditorView,
+    id: string,
+    sourceEntryId?: string,
+  ) {
     const found = findEntryPosByID(view.state.doc, id);
     if (!found) return;
     const dialoguePos = found.pos + 1;
@@ -1392,7 +1574,11 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     const decision = scriptSchema.nodes.decision.create(null, [
       scriptSchema.nodes.choice.create(null),
     ]);
-    let tr = view.state.tr.replaceWith(dialoguePos, dialoguePos + dialogueNode.nodeSize, decision);
+    let tr = view.state.tr.replaceWith(
+      dialoguePos,
+      dialoguePos + dialogueNode.nodeSize,
+      decision,
+    );
 
     if (sourceEntryId) {
       const sourceFound = findEntryPosByID(tr.doc, sourceEntryId);
@@ -1400,7 +1586,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         const sourceInner = sourceFound.node.firstChild!;
         if (sourceInner.type.name === "dialogue") {
           const sourceDialoguePos = sourceFound.pos + 1;
-          tr = tr.setNodeMarkup(sourceDialoguePos, null, { ...sourceInner.attrs, next: id });
+          tr = tr.setNodeMarkup(sourceDialoguePos, null, {
+            ...sourceInner.attrs,
+            next: id,
+          });
         }
       }
     }
@@ -1411,7 +1600,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       const choiceText = entryEl?.querySelector(".choice-text");
       if (choiceText) {
         const pos = view.posAtDOM(choiceText, 0);
-        const tr2 = view.state.tr.setSelection(TextSelection.create(view.state.doc, pos));
+        const tr2 = view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, pos),
+        );
         view.dispatch(tr2);
         view.focus();
       }
@@ -1462,9 +1653,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         return;
       }
       const query = input.value.slice(1).trim().toUpperCase();
-      filtered = query
-        ? allNames.filter((n) => n.startsWith(query))
-        : allNames;
+      filtered = query ? allNames.filter((n) => n.startsWith(query)) : allNames;
       selectedIdx = filtered.length > 0 ? 0 : -1;
       renderDropdown();
     }
@@ -1478,7 +1667,8 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       dropdown.style.display = "block";
       filtered.forEach((name, i) => {
         const item = document.createElement("div");
-        item.className = "name-autocomplete-item" + (i === selectedIdx ? " selected" : "");
+        item.className =
+          "name-autocomplete-item" + (i === selectedIdx ? " selected" : "");
         item.textContent = name;
         item.addEventListener("mousedown", (e) => {
           e.preventDefault();
@@ -1519,9 +1709,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       committed = true;
       let value: string;
       if (isAutocompleteMode()) {
-        value = selectedIdx >= 0 && filtered[selectedIdx]
-          ? filtered[selectedIdx]
-          : input.value.slice(1).trim().toUpperCase();
+        value =
+          selectedIdx >= 0 && filtered[selectedIdx]
+            ? filtered[selectedIdx]
+            : input.value.slice(1).trim().toUpperCase();
       } else {
         value = input.value.trim().toUpperCase();
       }
@@ -1561,7 +1752,8 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         e.preventDefault();
         e.stopPropagation();
         if (e.shiftKey) {
-          selectedIdx = selectedIdx <= 0 ? filtered.length - 1 : selectedIdx - 1;
+          selectedIdx =
+            selectedIdx <= 0 ? filtered.length - 1 : selectedIdx - 1;
         } else {
           selectedIdx = (selectedIdx + 1) % filtered.length;
         }
@@ -1584,7 +1776,11 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     });
   }
 
-  function createEntryBelow(state: EditorState, dispatch?: (tr: any) => void, view?: EditorView) {
+  function createEntryBelow(
+    state: EditorState,
+    dispatch?: (tr: any) => void,
+    view?: EditorView,
+  ) {
     if (activeNameInput) return false;
 
     const { $from } = state.selection;
@@ -1609,13 +1805,24 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       const inner = entryNode.firstChild;
       if (inner && inner.type.name === "decision") {
         let choiceDepth = $from.depth;
-        while (choiceDepth > 0 && $from.node(choiceDepth).type.name !== "choice") choiceDepth--;
+        while (
+          choiceDepth > 0 &&
+          $from.node(choiceDepth).type.name !== "choice"
+        )
+          choiceDepth--;
         const cursorChoice = choiceDepth > 0 ? $from.node(choiceDepth) : null;
 
         let linked = false;
-        if (cursorChoice && !cursorChoice.attrs.checked && !cursorChoice.attrs.next) {
+        if (
+          cursorChoice &&
+          !cursorChoice.attrs.checked &&
+          !cursorChoice.attrs.next
+        ) {
           const choicePos = $from.before(choiceDepth);
-          tr = tr.setNodeMarkup(choicePos, null, { ...cursorChoice.attrs, next: newId });
+          tr = tr.setNodeMarkup(choicePos, null, {
+            ...cursorChoice.attrs,
+            next: newId,
+          });
           linked = true;
         }
 
@@ -1629,14 +1836,20 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
           if (checkedChoices.length === 1) {
             const entryPos = $from.before(depth);
             const choicePos = entryPos + 1 + 1 + checkedChoices[0].offset;
-            tr = tr.setNodeMarkup(choicePos, null, { ...checkedChoices[0].node.attrs, next: newId });
+            tr = tr.setNodeMarkup(choicePos, null, {
+              ...checkedChoices[0].node.attrs,
+              next: newId,
+            });
           }
         }
       }
 
       const sourceEntryNode = $from.node(depth);
       const sourceInner = sourceEntryNode.firstChild;
-      const sourceId = sourceInner?.type.name === "dialogue" ? sourceEntryNode.attrs.id : undefined;
+      const sourceId =
+        sourceInner?.type.name === "dialogue"
+          ? sourceEntryNode.attrs.id
+          : undefined;
 
       dispatch(tr);
       requestAnimationFrame(() => showNameInput(view, newId, sourceId));
@@ -1644,7 +1857,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     return true;
   }
 
-  function buildNodeJson(view: EditorView, charNameEl: HTMLElement): {
+  function buildNodeJson(
+    view: EditorView,
+    charNameEl: HTMLElement,
+  ): {
     json: Record<string, any>;
     entryPos: number;
     nodePos: number;
@@ -1666,7 +1882,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
     if (innerNode.type.name === "dialogue") {
       const a = innerNode.attrs;
-      const json: Record<string, any> = { id: entryNode.attrs.id, char: a.char };
+      const json: Record<string, any> = {
+        id: entryNode.attrs.id,
+        char: a.char,
+      };
       const textArr: Record<string, any>[] = [];
       innerNode.forEach((line) => {
         const obj: Record<string, any> = { text: line.textContent };
@@ -1681,7 +1900,14 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       if (a.unskippable) json.unskippable = a.unskippable;
       if (a.randomize) json.randomize = a.randomize;
       if (a.extra) Object.assign(json, a.extra);
-      return { json, entryPos, nodePos, nodeType: "dialogue", entryNode, innerNode };
+      return {
+        json,
+        entryPos,
+        nodePos,
+        nodeType: "dialogue",
+        entryNode,
+        innerNode,
+      };
     } else if (innerNode.type.name === "decision") {
       const json: Record<string, any> = { id: entryNode.attrs.id };
       const inputArr: any[] = [];
@@ -1695,7 +1921,14 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       });
       json.input = inputArr;
       if (innerNode.attrs.extra) Object.assign(json, innerNode.attrs.extra);
-      return { json, entryPos, nodePos, nodeType: "decision", entryNode, innerNode };
+      return {
+        json,
+        entryPos,
+        nodePos,
+        nodeType: "decision",
+        entryNode,
+        innerNode,
+      };
     }
     return null;
   }
@@ -1720,7 +1953,8 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     const entryEl = charNameEl.closest(".entry") as HTMLElement | null;
     const clickedEntryId = entryEl?.dataset.entryId ?? null;
     if (activeJsonEditor) {
-      const same = clickedEntryId !== null && activeJsonEditor.entryId === clickedEntryId;
+      const same =
+        clickedEntryId !== null && activeJsonEditor.entryId === clickedEntryId;
       closeJsonEditor(view);
       if (same) return;
     }
@@ -1753,8 +1987,8 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     const wrapperRect = overlay.parentElement!.getBoundingClientRect();
     const charRect = charNameEl.getBoundingClientRect();
     popup.style.position = "absolute";
-    popup.style.left = (charRect.left - wrapperRect.left) + "px";
-    popup.style.top = (charRect.bottom - wrapperRect.top + 4) + "px";
+    popup.style.left = charRect.left - wrapperRect.left + "px";
+    popup.style.top = charRect.bottom - wrapperRect.top + 4 + "px";
     popup.style.width = charRect.width + "px";
 
     overlay.appendChild(popup);
@@ -1779,14 +2013,18 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       if (id !== undefined && id !== oldId) {
         let duplicate = false;
         view.state.doc.forEach((node) => {
-          if (node.type.name === "entry" && node.attrs.id === id) duplicate = true;
+          if (node.type.name === "entry" && node.attrs.id === id)
+            duplicate = true;
         });
         if (duplicate) {
           notyf.error(`ID "${id}" already exists`);
           return;
         }
 
-        tr = tr.setNodeMarkup(data.entryPos, null, { ...data.entryNode.attrs, id });
+        tr = tr.setNodeMarkup(data.entryPos, null, {
+          ...data.entryNode.attrs,
+          id,
+        });
         tr.doc.descendants((node, pos) => {
           if (
             (node.type.name === "dialogue" || node.type.name === "choice") &&
@@ -1798,7 +2036,16 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       }
 
       if (data.nodeType === "dialogue") {
-        const { char, delay, next, trigger, unskippable, randomize, text, ...extra } = rest;
+        const {
+          char,
+          delay,
+          next,
+          trigger,
+          unskippable,
+          randomize,
+          text,
+          ...extra
+        } = rest;
         const newAttrs = {
           char: char ?? data.innerNode.attrs.char,
           delay: delay ?? null,
@@ -1813,7 +2060,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
           const textArray = Array.isArray(text) ? text : [text];
           const lineNodes = textArray.map((l: any) => {
             if (typeof l === "string") {
-              return scriptSchema.nodes.line.create(null, l ? scriptSchema.text(l) : undefined);
+              return scriptSchema.nodes.line.create(
+                null,
+                l ? scriptSchema.text(l) : undefined,
+              );
             }
             const { text: lt, trigger: ltrig, ...lineExtra } = l;
             return scriptSchema.nodes.line.create(
@@ -1824,11 +2074,19 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
               lt ? scriptSchema.text(lt) : undefined,
             );
           });
-          content = scriptSchema.nodes.dialogue.createChecked(newAttrs, lineNodes).content;
+          content = scriptSchema.nodes.dialogue.createChecked(
+            newAttrs,
+            lineNodes,
+          ).content;
         }
-        const newDialogue = scriptSchema.nodes.dialogue.create(newAttrs, content);
+        const newDialogue = scriptSchema.nodes.dialogue.create(
+          newAttrs,
+          content,
+        );
         const mappedNodePos = tr.mapping.map(data.nodePos);
-        const mappedNodeEnd = tr.mapping.map(data.nodePos + data.innerNode.nodeSize);
+        const mappedNodeEnd = tr.mapping.map(
+          data.nodePos + data.innerNode.nodeSize,
+        );
         tr = tr.replaceWith(mappedNodePos, mappedNodeEnd, newDialogue);
       } else if (data.nodeType === "decision") {
         const { input, ...extra } = rest;
@@ -1836,7 +2094,14 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         let content = data.innerNode.content;
         if (input !== undefined && Array.isArray(input)) {
           const choiceNodes = input.map((c: any) => {
-            const { text: ct, next: cn, effect: ce, cond: cc, checked: ck, ...choiceExtra } = c;
+            const {
+              text: ct,
+              next: cn,
+              effect: ce,
+              cond: cc,
+              checked: ck,
+              ...choiceExtra
+            } = c;
             return scriptSchema.nodes.choice.create(
               {
                 next: cn ?? null,
@@ -1848,11 +2113,19 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
               ct ? scriptSchema.text(ct) : undefined,
             );
           });
-          content = scriptSchema.nodes.decision.createChecked({ extra: extraAttr }, choiceNodes).content;
+          content = scriptSchema.nodes.decision.createChecked(
+            { extra: extraAttr },
+            choiceNodes,
+          ).content;
         }
-        const newDecision = scriptSchema.nodes.decision.create({ extra: extraAttr }, content);
+        const newDecision = scriptSchema.nodes.decision.create(
+          { extra: extraAttr },
+          content,
+        );
         const mappedNodePos = tr.mapping.map(data.nodePos);
-        const mappedNodeEnd = tr.mapping.map(data.nodePos + data.innerNode.nodeSize);
+        const mappedNodeEnd = tr.mapping.map(
+          data.nodePos + data.innerNode.nodeSize,
+        );
         tr = tr.replaceWith(mappedNodePos, mappedNodeEnd, newDecision);
       }
 
@@ -1871,7 +2144,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
           cmKeymap.of([
             {
               key: "Escape",
-              run: () => { dismissJsonEditor(view); return true; },
+              run: () => {
+                dismissJsonEditor(view);
+                return true;
+              },
             },
           ]),
           CMEditorView.theme({
@@ -1904,7 +2180,10 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         document.removeEventListener("mousedown", handleClickOutside, true);
       },
     };
-    collab.provider.awareness.setLocalStateField("editing", data.entryNode.attrs.id);
+    collab.provider.awareness.setLocalStateField(
+      "editing",
+      data.entryNode.attrs.id,
+    );
   }
 
   let refreshPending = false;
@@ -1964,11 +2243,13 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
   const exportBtn = document.createElement("button");
   exportBtn.className = "export-btn";
-  exportBtn.textContent = "Export JSON";
+  exportBtn.textContent = "Export";
   exportBtn.addEventListener("click", () => {
     if (!view) return;
     const json = docToJson(view.state.doc);
-    const blob = new Blob([JSON.stringify(json, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(json, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -1981,7 +2262,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
   if (currentUser?.isSuperuser) {
     const importBtn = document.createElement("button");
     importBtn.className = "export-btn";
-    importBtn.textContent = "Import JSON";
+    importBtn.textContent = "Import";
     importBtn.addEventListener("click", () => {
       if (!view) return;
       const fileInput = document.createElement("input");
@@ -2008,6 +2289,17 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       fileInput.click();
     });
     toolbar.appendChild(importBtn);
+  }
+
+  if (currentUser) {
+    const historyBtn = document.createElement("button");
+    historyBtn.className = "export-btn";
+    historyBtn.textContent = "History";
+    historyBtn.addEventListener("click", () => {
+      if (!view) return;
+      openVersionHistory(docId, view, notyf, canEdit);
+    });
+    toolbar.appendChild(historyBtn);
   }
 
   // Auth UI in toolbar
@@ -2090,10 +2382,7 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
 
     const editorState = EditorState.create({
       schema: scriptSchema,
-      plugins: [
-        ...collab.plugins,
-        ...editKeymap,
-      ],
+      plugins: [...collab.plugins, ...editKeymap],
     });
 
     view = new EditorView(wrapper, {
@@ -2105,16 +2394,26 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
           const charNameEl = target.closest(".char-name") as HTMLElement | null;
           if (charNameEl) {
             if (target.closest(".char-name-link")) {
-              charNameMousedown = { x: event.clientX, y: event.clientY, target: charNameEl };
+              charNameMousedown = {
+                x: event.clientX,
+                y: event.clientY,
+                target: charNameEl,
+              };
             }
             return true;
           }
           if (target.closest(".drag-handle")) {
             return true;
           }
-          if (!target.closest(".choice-text") && !target.closest(".dialogue-lines .line") && !target.closest(".choice-checkbox")) {
+          if (
+            !target.closest(".choice-text") &&
+            !target.closest(".dialogue-lines .line") &&
+            !target.closest(".choice-checkbox")
+          ) {
             const y = event.clientY;
-            const candidates = pmView.dom.querySelectorAll<HTMLElement>(".choice, .dialogue-lines .line");
+            const candidates = pmView.dom.querySelectorAll<HTMLElement>(
+              ".choice, .dialogue-lines .line",
+            );
             for (const el of candidates) {
               const rect = el.getBoundingClientRect();
               if (y >= rect.top && y <= rect.bottom) {
@@ -2124,7 +2423,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
                 if (textEl) {
                   event.preventDefault();
                   const pos = pmView.posAtDOM(textEl, textEl.childNodes.length);
-                  const tr = pmView.state.tr.setSelection(TextSelection.create(pmView.state.doc, pos));
+                  const tr = pmView.state.tr.setSelection(
+                    TextSelection.create(pmView.state.doc, pos),
+                  );
                   pmView.dispatch(tr);
                   pmView.focus();
                   return true;
@@ -2189,10 +2490,15 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
             let needsFix = false;
             fixTr.doc.descendants((node, pos) => {
               if (
-                (node.type.name === "dialogue" || node.type.name === "choice") &&
-                node.attrs.next && removed.has(node.attrs.next)
+                (node.type.name === "dialogue" ||
+                  node.type.name === "choice") &&
+                node.attrs.next &&
+                removed.has(node.attrs.next)
               ) {
-                fixTr = fixTr.setNodeMarkup(pos, null, { ...node.attrs, next: null });
+                fixTr = fixTr.setNodeMarkup(pos, null, {
+                  ...node.attrs,
+                  next: null,
+                });
                 needsFix = true;
               }
             });
@@ -2217,7 +2523,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
     function updateEditingIndicators() {
       const obs = (view as any).domObserver;
       obs?.stop?.();
-      view.dom.querySelectorAll(".editing-indicator").forEach((el) => el.remove());
+      view.dom
+        .querySelectorAll(".editing-indicator")
+        .forEach((el) => el.remove());
       view.dom.querySelectorAll(".char-name-editing").forEach((el) => {
         el.classList.remove("char-name-editing");
         (el as HTMLElement).style.removeProperty("--editor-color");
@@ -2231,7 +2539,9 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
         const user = state.user;
         if (!user) return;
 
-        const entryEl = view.dom.querySelector(`.entry[data-entry-id="${editingId}"]`);
+        const entryEl = view.dom.querySelector(
+          `.entry[data-entry-id="${editingId}"]`,
+        );
         if (!entryEl) return;
         const charName = entryEl.querySelector(".char-name") as HTMLElement;
         if (!charName) return;
@@ -2273,7 +2583,8 @@ export function mountEditor(appEl: HTMLElement, docId: string, canEdit = true): 
       let allWouldBeChecked = true;
       decisionNode.forEach((child) => {
         if (child.type.name === "choice") {
-          const wouldBe = child === choiceNode ? newChecked : child.attrs.checked;
+          const wouldBe =
+            child === choiceNode ? newChecked : child.attrs.checked;
           if (!wouldBe) allWouldBeChecked = false;
         }
       });

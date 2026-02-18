@@ -753,3 +753,173 @@ button:focus-visible {
   padding: 0.2rem 0;
 }
 
+/* Version history modal */
+.version-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.version-modal {
+  background: #1a1a2a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 1.25rem;
+  width: 460px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.version-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.version-modal-title {
+  font-weight: 600;
+  color: #ccc;
+  font-size: 0.95em;
+}
+
+.version-modal-close {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 1.4em;
+  cursor: pointer;
+  padding: 0 0.3em;
+  line-height: 1;
+}
+
+.version-modal-close:hover {
+  color: #ccc;
+}
+
+.version-save-btn {
+  width: 100%;
+  padding: 0.5em;
+  margin-bottom: 0.75rem;
+  font-size: 0.85em;
+  background: #2a2a4a;
+  color: #aac;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.version-save-btn:hover {
+  border-color: #646cff;
+  color: #dde;
+}
+
+.version-save-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.version-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.version-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+  background: #242434;
+  border-radius: 4px;
+}
+
+.version-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.version-top-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+}
+
+.version-id {
+  font-size: 0.8em;
+  color: #666;
+  font-weight: 600;
+}
+
+.version-label {
+  font-size: 0.85em;
+  color: #ccc;
+}
+
+.version-label-auto {
+  color: #666;
+  font-style: italic;
+}
+
+.version-meta {
+  font-size: 0.75em;
+  color: #888;
+  margin-top: 0.15em;
+}
+
+.version-restore-btn {
+  flex-shrink: 0;
+  padding: 0.3em 0.7em;
+  font-size: 0.8em;
+  background: #2a2a4a;
+  color: #aac;
+  border: 1px solid #444;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 0.5rem;
+}
+
+.version-restore-btn:hover {
+  border-color: #646cff;
+  color: #dde;
+}
+
+.version-restore-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.version-load-more {
+  width: 100%;
+  padding: 0.4em;
+  margin-top: 0.5rem;
+  font-size: 0.8em;
+  background: transparent;
+  color: #888;
+  border: 1px solid #333;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.version-load-more:hover {
+  color: #ccc;
+  border-color: #555;
+}
+
+.version-empty {
+  color: #666;
+  font-style: italic;
+  padding: 1rem 0;
+  text-align: center;
+}
+
